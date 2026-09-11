@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gasmon"
+version = "0.1.0"
+description = "Per-block gas attribution for Robinhood Chain and other Nitro/EVM chains"
+readme = "README.md"
+requires-python = ">=3.9"
+# No third-party dependencies on purpose: stdlib only (urllib, sqlite3,
+# hashlib, concurrent.futures). The collector runs anywhere Python does.
+dependencies = []
+
+[project.scripts]
+gasmon = "gasmon.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

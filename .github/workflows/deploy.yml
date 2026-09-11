@@ -1,0 +1,93 @@
+name: Deploy dashboard to GitHub Pages
+
+# The gas database is committed, so a deploy is a pure build: no chain access,
+# no collector run, nothing to rate-limit. Refresh the data with
+# `pnpm gas:refresh` and commit `apps/web/data/gas.db` to publish new numbers.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a running deploy finish rather than cancelling it: a half-deployed Pages
+# site is worse than a slightly stale one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # `node:sqlite` is read at build time by the dashboard's Server
+          # Components. It landed in 22.5 and is stable from 24.
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Fail early if the gas database is missing
+        run: |
+          if [ ! -f apps/web/data/gas.db ]; then
+            echo "apps/web/data/gas.db is not committed — the build would have no data."
+            echo "Run 'pnpm gas:refresh' locally and commit the result."
+            exit 1
+          fi
+          echo "database: $(du -h apps/web/data/gas.db | cut -f1)"
+
+      - run: pnpm typecheck
+      - run: pnpm lint
+
+      - name: Resolve the Pages base path
+        id: base
+        run: |
+          # A user/org site (owner.github.io) is served from the root; every
+          # other repo is served from /<repo> and needs the prefix.
+          if [[ "${{ github.event.repository.name }}" == *.github.io ]]; then
+            echo "path=" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=/${{ github.event.repository.name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build static export
+        env:
+          PAGES_BASE_PATH: ${{ steps.base.outputs.path }}
+        run: pnpm build
+
+      - name: Disable Jekyll
+        # Without this, Pages' Jekyll step drops the `_next` directory and the
+        # site loads with no CSS or JS.
+        run: touch apps/web/out/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/web/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -7,7 +7,8 @@
     "dev": "turbo dev",
     "lint": "turbo lint",
     "format": "turbo format",
-    "typecheck": "turbo typecheck"
+    "typecheck": "turbo typecheck",
+    "gas:refresh": "node scripts/collect-gas-data.mjs"
   },
   "devDependencies": {
     "@workspace/eslint-config": "workspace:*",

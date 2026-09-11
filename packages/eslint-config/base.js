@@ -27,6 +27,14 @@ export const config = [
     },
   },
   {
-    ignores: ["dist/**", ".next/**", "**/.turbo/**", "**/coverage/**"],
+    // "out/**" is the Next.js static-export output: generated, minified, and
+    // not ours to lint.
+    ignores: [
+      "dist/**",
+      ".next/**",
+      "out/**",
+      "**/.turbo/**",
+      "**/coverage/**",
+    ],
   },
 ]

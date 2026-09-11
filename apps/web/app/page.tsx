@@ -1,19 +1,33 @@
-import { Button } from "@workspace/ui/components/button"
+import { AppSidebar } from "@/components/app-sidebar"
+import { DashboardView } from "@/components/dashboard-view"
+import { SiteHeader } from "@/components/site-header"
+import { getDashboardSnapshot } from "@/lib/gas/data"
+import {
+  SidebarInset,
+  SidebarProvider,
+} from "@workspace/ui/components/sidebar"
 
-export default function Page() {
+export const metadata = {
+  title: "Gas Monitor · Robinhood Chain",
+  description:
+    "Gas usage on Robinhood Chain by contract, code identity and source line.",
+}
+
+/**
+ * Server Component. Under `output: "export"` this runs once at build time, so
+ * `getDashboardSnapshot()` is where a SQLite extract will be read — no client
+ * data fetching, no runtime, nothing to wire.
+ */
+export default async function Page() {
+  const snapshot = await getDashboardSnapshot()
+
   return (
-    <div className="flex min-h-svh p-6">
-      <div className="flex max-w-md min-w-0 flex-col gap-4 text-sm leading-loose">
-        <div>
-          <h1 className="font-medium">Project ready!</h1>
-          <p>You may now add components and start building.</p>
-          <p>We&apos;ve already added the button component for you.</p>
-          <Button className="mt-2">Button</Button>
-        </div>
-        <div className="text-muted-foreground font-mono text-xs">
-          (Press <kbd>d</kbd> to toggle dark mode)
-        </div>
-      </div>
-    </div>
+    <SidebarProvider>
+      <AppSidebar />
+      <SidebarInset>
+        <SiteHeader />
+        <DashboardView snapshot={snapshot} />
+      </SidebarInset>
+    </SidebarProvider>
   )
 }
