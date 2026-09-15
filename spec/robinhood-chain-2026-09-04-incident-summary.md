@@ -16,9 +16,10 @@
   transactions.
 - **The trigger:** the US jobs report at 12:30 UTC set off a bidding war for
   Ethereum block space. Robinhood's batch poster posts the chain's data to
-  Ethereum. It was bidding the lowest tip of any rollup, and it got nothing in for
-  8½ minutes while other rollups kept posting. It had no spare capacity either,
-  so its backlog grew to 18 minutes.
+  Ethereum. It bid at the bottom of the market and didn't raise its bid. Like
+  every poster that stayed that low, Arbitrum One's included, it got nothing in
+  for 8½ minutes. Unlike them, it had no spare capacity, so its backlog grew to
+  18 minutes.
 - **Could it have been caught?** Yes, from public data. A monitor would have
   warned at 12:34:47 and paged at 12:45, 12 minutes before the first "halt"
   headline.
@@ -57,7 +58,7 @@ transmitter re-broadcasting every 60 seconds. Its earlier attempts weren't slow,
 they were dropped. This hit all 9 transmitters and 28 of 30 feeds, so it wasn't
 one operator's problem.
 
-## 4. The trigger: a jobs report, a bidding war, and the lowest bid on Ethereum
+## 4. The trigger: a jobs report, a bidding war, and a bid that didn't move
 
 An L2 has to post its transaction data to Ethereum. On Robinhood Chain one batch
 poster does this, and it competes for block space like everyone else.
@@ -71,12 +72,21 @@ poster does this, and it competes for block space like everyone else.
     normal;
   - the base fee compounded from ~0.1 to 1.8 gwei by 12:54.
 - **12:29:47–12:38:23: Robinhood's batches stop landing.** Its fee cap wasn't the
-  problem: it allowed 10× the base fee. Its **tip was 0.001 gwei, the lowest of any
-  rollup.** During the stall Ethereum still included 75 blob transactions from 22
-  other rollups, among them Base, OP Mainnet, Unichain and World Chain, mostly
-  tipping 1–5 gwei. Robinhood got none in until it re-signed with higher fees.
-  The same thing happened again from 12:42 to 12:48.
-- **It was already at its limit.** In busy hours it was posting about one
+  problem: it allowed 10× the base fee. Its **tip was 0.001 gwei**, a common bid in
+  quiet blocks, where ~15% of blob bids are that low. The spike changed the price
+  of getting in:
+  - **Other rollups kept posting.** Ethereum still included 75 blob transactions
+    from 22 of them, among them Base, OP Mainnet, Unichain and World Chain, mostly
+    tipping 1–5 gwei.
+  - **Every poster that stayed near 0.001 gwei was shut out.** That includes
+    **Arbitrum One's**, which runs the same software as Robinhood's and got nothing
+    in from 12:29 to 12:39.
+  - **Raising the tip worked.** OP Mainnet's poster, also at 0.001 gwei before,
+    went to 2–4 gwei and kept posting.
+  - **Robinhood only got in again by re-signing with higher fees.** The same thing
+    happened again from 12:42 to 12:48.
+- **The stall wasn't unique to Robinhood. What it did to Robinhood was.** The
+  poster was already at its limit: in busy hours it was posting about one
   3-blob batch per Ethereum block. That left a standing 4½-minute backlog from
   Sep 3 midday until the Sep 4 evening close.
 - **So the stall had nowhere to go.** The backlog of blocks not yet on Ethereum
@@ -98,18 +108,19 @@ transactions. Two things aren't visible on-chain:
 
 - how the backlog turned into dropped submissions inside Robinhood's
   infrastructure;
-- why builders skipped a 0.001 gwei batch even in blocks that weren't full.
+- why builders skipped 0.001 gwei batches even in blocks that weren't full.
 
 Only Robinhood and the builders can confirm those.
 
 ## 5. What would have kept it from getting this bad
 
 1. **Bid like it matters.** A batch poster competes with MEV bots for block space.
-   Robinhood's bid the minimum, and when its batches stuck it raised the fee cap,
-   the setting that wasn't holding them back, far more than its tip. The rollups
-   that kept posting through the spike tipped 1–5 gwei. Even a 2 gwei tip costs
-   about 0.0003 ETH per batch. Set a competitive tip by default, and raise it fast
-   when batches stop landing. Robinhood raised its tip the same evening.
+   Robinhood's sat at the bottom of the market. When its batches stuck, it raised
+   its fee cap, the setting that wasn't holding them back, far more than its tip.
+   OP Mainnet's poster shows the alternative: it also bids 0.001 gwei in quiet
+   blocks, went to 2–4 gwei within minutes, and kept posting. Even a 2 gwei tip
+   costs about 0.0003 ETH per batch. Raise the tip fast when batches stop landing,
+   or bid higher by default. Robinhood raised its tip the same evening.
 2. **Give the batch poster headroom.** A poster running at its ceiling for days
    turns any Ethereum hiccup into a long backlog. Posting capacity should cover
    peak hours with room to spare.
@@ -123,15 +134,15 @@ Only Robinhood and the builders can confirm those.
 
 ## 6. How a monitoring dashboard would have helped
 
-We rebuilt this as a live-style monitor on public data only: Ethereum logs and
-headers, Robinhood Chain receipts, and Chainlink events. We replayed Sep 1–14 with
+We rebuilt this as a live-style monitor on public data only: Ethereum logs,
+headers and sampled full blocks, Robinhood Chain receipts, and Chainlink events. We replayed Sep 1–14 with
 each alert firing only on data available at that moment. You can explore the
 replay on the
 [Chain health dashboard](https://walnuthq.github.io/robinhood-gas-monitor/health/).
 
 | When (UTC) | What the dashboard showed | What it enables |
 | --- | --- | --- |
-| **Sep 1–4, every hour sampled** | Poster tipping 0.001 gwei, when the rollups beside it on Sep 4 paid ~1 gwei. *Public data, not yet a dashboard rule* | Fix the bid days ahead (fix 1) |
+| **Sep 1 11:30 → Sep 4 20:00, continuously** | *Watch:* poster bids at the bottom of the blob market (0.001 gwei, with a market median 1,000× that) | Fix the bid days ahead (fix 1) |
 | **Sep 1–3, every US afternoon** | *Watch:* poster has no headroom (median posting delay ≥ 4 min) | Capacity planning days ahead (fix 2) |
 | **Sep 4, 09:20** | *Warn:* 6-min poster stall, 11-min backlog; ingress stayed healthy | A dress rehearsal, 3 hours early |
 | **12:34:47** | *Warn:* batch poster silent for 5 min | Re-bid stuck batches with a real tip (fix 1), 2 min before users start failing |
@@ -145,10 +156,17 @@ replay on the
   recurred that afternoon. It stayed quiet on the other 13 days, across 12,292
   Chainlink updates.
 - **Warnings** fired 3 other times, and no collapse followed any of them.
+- **The underbidding watch** switched off with Robinhood's tip raise on the evening
+  of Sep 4. It came back twice, weakly, at 0.25–0.5 gwei, on Sep 5–7 and on Sep 11,
+  the day of a 5-minute stall.
 
 **Caveats:** the rules were designed with Sep 4 in view and have been checked on
 14 days of data, not years. Keep it running and the thresholds get tested on
 incidents they haven't seen.
 
-*Revised 2026-09-15, the day it was drafted: added the jobs-report trigger, and
-corrected why the poster stalled (its tip, not its fee cap).*
+*Revised 2026-09-15, the day it was drafted. It adds the jobs-report trigger and
+corrects why the poster stalled: its tip, not its fee cap. A later revision the same
+day corrected "the lowest tip of any rollup": ~15% of blob bids are as low, and
+the spike priced out every poster that stayed there, Arbitrum One's included. The
+§6 table then gained the underbidding watch, once it was built and replayed on the
+dashboard.*

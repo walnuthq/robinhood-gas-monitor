@@ -2,6 +2,7 @@
 
 import * as React from "react"
 
+import { EthereumLinkCards } from "@/components/ethereum-link-cards"
 import { BlockLink } from "@/components/explorer-link"
 import { GasChart } from "@/components/gas-chart"
 import { GasEatersTable } from "@/components/gas-eaters-table"
@@ -9,6 +10,7 @@ import { KpiCards } from "@/components/kpi-cards"
 import type { DashboardSnapshot } from "@/lib/gas/data"
 import { formatTimestamp } from "@/lib/gas/format"
 import { DEFAULT_PERIOD, type Period } from "@/lib/gas/types"
+import type { EthereumLink } from "@/lib/health/types"
 
 /**
  * Owns the selected window and slices the pre-materialised snapshot with it, so
@@ -21,7 +23,14 @@ import { DEFAULT_PERIOD, type Period } from "@/lib/gas/types"
  * `generateStaticParams()` — so each window is its own pre-rendered HTML page
  * and the payload stays proportional to what is on screen.
  */
-export function DashboardView({ snapshot }: { snapshot: DashboardSnapshot }) {
+export function DashboardView({
+  snapshot,
+  ethereumLink,
+}: {
+  snapshot: DashboardSnapshot
+  /** From the chain-health collection, which has its own window; null without one. */
+  ethereumLink: EthereumLink | null
+}) {
   const [period, setPeriod] = React.useState<Period>(DEFAULT_PERIOD)
 
   const kpis = snapshot.kpis[period]
@@ -31,6 +40,8 @@ export function DashboardView({ snapshot }: { snapshot: DashboardSnapshot }) {
 
   return (
     <div className="@container/main flex flex-1 flex-col gap-4 p-4 lg:gap-6 lg:p-6">
+      {ethereumLink ? <EthereumLinkCards link={ethereumLink} /> : null}
+
       <KpiCards kpis={kpis} meta={meta} />
 
       <GasChart

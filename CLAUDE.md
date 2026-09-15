@@ -84,11 +84,14 @@ several conclusions have already reversed. Keep that convention.
   - the US jobs report (12:30:00 UTC, 162k vs 53k expected) set off an arbitrage
     bidding war on Ethereum. Blocks ran ~80% full with 33× normal priority fees,
     and the base fee compounded 18× by 12:54;
-  - Robinhood's batch poster, tipping **0.001 gwei** (the lowest of any rollup,
-    with fee caps 10× base fee, so not stale), got nothing in for 516 s, the
-    longest gap in 70,314 batches since Sep 1. 22 other rollups kept posting at
-    mostly 1–5 gwei. Robinhood raised the tip to 0.5 gwei at 20:06:47 that evening
-    (0.25 from Sep 8). "Stuck at the old fee cap" was wrong (corrected 2026-09-15);
+  - Robinhood's batch poster, tipping **0.001 gwei** (bottom of the market, not
+    the lowest: ~15% of blob bids are that low; fee caps were 10× base fee, so
+    not stale), got nothing in for 516 s, the longest gap in 70,314 batches since
+    Sep 1. The spike priced out *every* poster that stayed near 0.001 gwei,
+    Arbitrum One's included (12:29–12:39). OP Mainnet's raised its tip to 2–4 gwei
+    and kept posting. Robinhood raised the tip to 0.5 gwei at 20:06:47 that evening
+    (0.25 from Sep 8). "Stuck at the old fee cap" and "lowest of any rollup" were
+    both wrong (corrected 2026-09-15);
   - the poster was already at its ceiling (~1 three-blob batch per L1 block,
     standing 4.5-min backlog), so the backlog hit ~18 min;
   - ingress then dropped txs from 12:40 to 13:10: Chainlink OCR2 inclusion delay

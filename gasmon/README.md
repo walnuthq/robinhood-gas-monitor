@@ -99,8 +99,9 @@ gasmon health --db health.db --from 2026-09-01T00:00:00Z --to now \
 | Table | Source | Collected |
 | --- | --- | --- |
 | `batches` | `SequencerBatchDelivered` on Ethereum (SequencerInbox `0xBd0D…ba96`) | every one |
-| `batch_decodes` | batch calldata → newest L2 block → posting delay | one per `--decode-every` s, every batch in `--dense` windows, and the batches either side of every gap ≥ 120 s |
+| `batch_decodes` | batch calldata → newest L2 block → posting delay; the poster's bid (`max_priority_fee_per_gas`, fee caps) | one per `--decode-every` s, every batch in `--dense` windows, and the batches either side of every gap ≥ 120 s |
 | `l1_blocks` | Ethereum headers: base fee, utilisation, blob gas | one per `--l1-every` s, every block in dense windows |
+| `l1_blob_txs`, `l1_bid_blocks` | full Ethereum blocks: every blob transaction's sender, inbox, blobs and priority fee paid (`min(maxPriorityFeePerGas, maxFeePerGas − baseFee)`) | one block per `--bids-every` s (default 1,200), every block in dense windows; `reason` marks which |
 | `oracle_tx` | Chainlink OCR2 `NewTransmission`: block time − `observationsTimestamp` | every one |
 | `l2_samples` | Robinhood receipts: successful, reverted, failed ERC-4337 bundles | one block per `--l2-every` s, per `--dense-l2-every` s in dense windows |
 | `alerts` | the rules below, evaluated over everything stored | recomputed every run |
@@ -114,6 +115,7 @@ samples are listed in the incident spec's §8. "Outside" means starting outside 
 
 | Rule | Severity | Fires when | Sep 4 incident | Outside, Sep 1–14 |
 | --- | --- | --- | --- | --- |
+| `poster_underbid` | watch | at most 25% of other rollups' blob bids included over the past 24 h (sampled blocks only) are below the poster's priority fee | active since Sep 1 11:30, until Sep 4 20:00:23 (market median 1,000× its bid) | 3 episodes on 2 days, at 2–4× |
 | `poster_headroom` | watch | median posting delay over the past 2 h ≥ 240 s (first decoded batch per 20-min slot) | 12:40 (lapsed 10:40–12:40) | 7 episodes on 6 days |
 | `l1_fee_spike` | context | Ethereum base fee ≥ 5× the median 5–15 min earlier | 12:35:11 | 7 |
 | `poster_silent` | warn | no batch reaches Ethereum for 300 s (fires at the 300th second) | 12:34:47 | 3 |
@@ -121,6 +123,20 @@ samples are listed in the incident spec's §8. "Outside" means starting outside 
 | `write_path` | page | 5-min p90 Chainlink inclusion delay ≥ 120 s over ≥ 5 transmissions (fires as the bin closes) | 12:45 | none |
 | `bundler_failures` | impact | ≥ 1 failed EntryPoint bundle per sampled block over 5 min | 12:50 | 1 |
 | `user_impact` | impact | successful tx per block < 50% of the previous 2 h median, two 5-min bins running | 13:00 | none |
+
+`poster_underbid` runs from the moment enough bids had been sampled on Sep 1 until
+the last batch before Robinhood raised its tip from 0.001 to 0.5 gwei, at 20:06:47
+on Sep 4. After that it fired twice more, both weakly:
+
+- **Sep 5–7, at 0.5 gwei:** the market median was 2× the poster's bid.
+- **Sep 11 08:00–19:10, at 0.25 gwei:** 4×. This stretch covers that day's 300 s
+  poster stall.
+
+The market's 25th percentile rose after Sep 4, from 0.012 to 0.1 gwei across the
+sampled blocks. At a 10% threshold the rule gives only the Sep 1–4 episode, and at
+50% it never stops. The 25% threshold was chosen before those results, on a 60-block
+look. The 24 h window replaced 6 h after measuring that a 6 h window seldom held 30
+bids. Both choices were made on this fortnight.
 
 `bundler_failures` sits near its threshold in the first minutes, so its fire time
 moves with the sampled blocks (a smoke run over other blocks fired at 12:40).
@@ -147,6 +163,12 @@ Endpoint facts this relies on, all measured 2026-09-14:
   with a larger retry budget. Batched requests to the official endpoint alone
   managed ~1 block/s. This layout sustained 5.8 blocks/s over 20,780 blocks on
   2026-09-14. A block that still fails is skipped and filled on the next run.
+- Full Ethereum blocks (`eth_getBlockByNumber(n, true)`) from keyless `eth.drpc.org`
+  run at ~1.2 blocks/s with 6 workers. That is 2,311 blocks in 33 minutes for
+  Sep 1–14 at `--bids-every 1200` plus the two dense windows, measured on
+  2026-09-15. Refilling the poster's tip on 3,507 older decodes took 12 minutes.
+  The binary search for block numbers costs ~30 s per window on every run, even
+  when nothing new is fetched.
 
 ## Data model
 

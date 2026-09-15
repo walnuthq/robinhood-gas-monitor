@@ -56,7 +56,9 @@ topped out at $8.36M/day on 2026-09-04 and is down 74% since. See
 >   transactions at ingress. It also likely explains the L1 pricing bursts.
 >   *(2026-09-15: the US jobs report at 12:30 UTC set off the spike. The poster
 >   stalled because it tipped 0.001 gwei, the lowest of any rollup, and Robinhood
->   raised the tip to 0.5 gwei that evening.)* See
+>   raised the tip to 0.5 gwei that evening. Corrected later that day: not the
+>   lowest. ~15% of blob bids are that low, and the spike priced out every poster
+>   that stayed there, Arbitrum One's included.)* See
 >   [robinhood-chain-2026-09-04-incident.md](robinhood-chain-2026-09-04-incident.md).
 
 ## Identity and access

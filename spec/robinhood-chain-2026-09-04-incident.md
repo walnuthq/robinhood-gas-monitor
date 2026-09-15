@@ -36,6 +36,18 @@ be recomputed from them.
 >
 > See §7, "What set off the spike" and "Why the poster could not get in".
 
+> **Correction, 2026-09-15 (later).** "The lowest of any rollup" was wrong.
+>
+> - **In quiet blocks, 0.001 gwei is a common bid.** Before the stall, 10 of 61
+>   other blob transactions bid 0.001 gwei or less, from five posters, one at
+>   0.0001. In a 60-block sample across the fortnight, 13–18% did.
+> - **The spike priced out every bid that low.** Posters that stayed at 0.001 gwei
+>   were shut out, Arbitrum One's batch poster among them. Those that raised their
+>   tip got in, OP Mainnet's among them.
+>
+> Robinhood bid at the bottom of the market and did not raise its bid, rather than
+> bidding the least. Details in §7.
+
 ## Headline
 
 | Question | Answer |
@@ -45,7 +57,7 @@ be recomputed from them.
 | Who was affected? | **Nearly everyone.** The median busy entry contract kept 19% of its successful traffic, and none kept 80%. Wallets, trading terminals, routers and a bridge fell alike, and busy bots were cut as hard as occasional users |
 | Where did it fail? | **In transaction ingress.** From 12:40 to 13:10, Chainlink price updates landed only on their 2nd–5th broadcast, a minute apart. Submissions were being dropped, not blocks |
 | What triggered it? | **An Ethereum fee spike at 12:30** (base fee 18× within 20 minutes) **stalled Robinhood's batch poster** for 8½ minutes, the longest stall in 13.8 days. The poster had no spare capacity, so its backlog of unposted blocks grew to ~18 minutes |
-| What set off the spike, and why did the poster stall? *(added 2026-09-15)* | **The US jobs report**, released at 12:30:00 UTC, set off an arbitrage rush. The first full block after it paid 12.6 ETH in priority fees. **The poster was outbid:** it tipped 0.001 gwei while 22 other rollups kept posting at mostly 1–5 gwei. Its fee caps were not the constraint. Robinhood raised the tip to 0.5 gwei at 20:06:47 that evening (§7) |
+| What set off the spike, and why did the poster stall? *(added 2026-09-15)* | **The US jobs report**, released at 12:30:00 UTC, set off an arbitrage rush. The first full block after it paid 12.6 ETH in priority fees. **The poster was outbid:** it tipped 0.001 gwei while 22 other rollups kept posting at mostly 1–5 gwei. Its fee caps were not the constraint. *(Later the same day: every poster that stayed near 0.001 gwei was priced out, Arbitrum One's included. Robinhood was at the bottom of the market, not alone there.)* Robinhood raised the tip to 0.5 gwei at 20:06:47 that evening (§7) |
 | Is that the whole cause? | **No.** On Sep 11 the same Ethereum trigger and a 5-minute poster stall caused no ingress failure. How the backlog turned into dropped transactions inside Robinhood's infrastructure is not visible on-chain (§7). *(2026-09-15: by Sep 11 the poster was also tipping 250× more.)* |
 | Could it have been caught? | **Yes, from public data.** A poster-silence alert fires at 12:34:47, and a write-path alert that stayed quiet on every other day of the fortnight fires by 12:45. The press reported the start as 12:57 (§8) |
 | Is it a daily pattern? | **No.** The same clock window on 09-03 and 09-05 shows no dip |
@@ -469,9 +481,10 @@ Two things made it worse than a stall:
 - **So the stall had nowhere to go.** The backlog peaked at ~18 minutes at 12:45.
   It took until ~13:10 just to return to its standing 4½ minutes.
 
-### Why the poster could not get in: the lowest tip on Ethereum
+### Why the poster could not get in: a bottom-of-market tip it did not raise
 
-*Added 2026-09-15.* The sources are the poster's own batch transactions
+*Added 2026-09-15. The heading first read "the lowest tip on Ethereum"; see the
+correction below.* The sources are the poster's own batch transactions
 (`eth_getTransactionByHash`) and every blob transaction in the receipts above:
 
 - all 410 batch transactions from 12:00 to 13:30 on Sep 4;
@@ -481,6 +494,36 @@ Two things made it worse than a stall:
 **It bid 0.001 gwei.** All 58 Robinhood batches from 12:20 to 12:29:47 carried
 exactly that priority fee. The other blob transactions in those minutes averaged
 1.15 gwei. They came from 52 different posters over 12:20–12:50.
+
+> **Correction, 2026-09-15 (later).** The average hides a wide spread, and
+> Robinhood was not the lowest bidder. Across the 61 other blob transactions from
+> 12:20 to 12:29:47:
+>
+> - **The spread:** the minimum was 0.0001 gwei, the 25th percentile 0.012 and the
+>   median 1.0.
+> - **Bids as low as Robinhood's:** 10 of them (16%) bid 0.001 gwei or less, from
+>   five posters.
+> - **A wider sample:** 60 full blocks spread over Sep 1–14 give the same picture.
+>   13–18% of other blob transactions bid 0.001 gwei or less; the 25th percentile is
+>   0.012 gwei and the median 0.4–1 gwei.
+>
+> A sample of 60 blocks is small, and the collector's sampled blocks will replace it.
+> What the spike did to those five cheap bidders is the more telling result:
+>
+> | poster | inbox → chain | tip before | during the stall | gap |
+> | --- | --- | --- | --- | --- |
+> | `0xc1b63485…` | SequencerInbox `0x1c479675…` → **Arbitrum One** (its rollup reports `chainId()` 42161) | 0.001 gwei | none landed | 12:29:11 → 12:39:35 |
+> | `0x0c5911d5…` | `0x211e1c4c…` | 0.001 | none landed | 12:24:47 → 12:38:59 |
+> | `0xf8ff3e62…` | `0xe28cac16…` | 0.001–0.002 | none landed | 12:25:11 → 12:42:11 |
+> | `0x68872466…` | `0xff00…0010` → **OP Mainnet** | 0.001 | **raised to 2.0–4.0 gwei**, 7 landed | 12:28:11 → 12:34:23 |
+> | `0x2f40d796…` | `0xffeedd…` | 0.0001 | raised to 0.0032 gwei, 1 landed | 12:22:23 → 12:35:35 |
+>
+> - **Cheap bids stopped landing.** Every poster that stayed near 0.001 gwei stopped
+>   landing until 12:38–12:42, including Arbitrum One's poster, which runs the same
+>   Nitro software as Robinhood's. The two that raised their tips got in.
+> - **What set Robinhood apart** was not the stall. It was what the stall did to a
+>   chain with no spare posting capacity.
+> - **Arbitrum One's own health that afternoon** is not examined here.
 
 **Everyone else kept posting.** From 12:29:48 to 12:38:22, Ethereum included 75
 blob transactions from 22 other posters, and none from Robinhood. 88% of them
@@ -511,6 +554,10 @@ tip had risen at most 10×, to 0.01 gwei.
 in the blocks at 12:36–12:38 that were only 50–65% full. The mechanism inside the
 builders is not on-chain. What is on-chain is that Robinhood bid the least, and
 paid for it in the one window where that mattered.
+
+> **Correction, 2026-09-15 (later).** It bid at the bottom of the market and did not
+> raise its bid, rather than bidding the least; see the table above. The same
+> window priced out every poster that stayed near 0.001 gwei.
 
 **Robinhood raised the tip that evening.** Bisecting the poster's batches gives
 two changes to its priority fee cap:
@@ -678,6 +725,20 @@ Robinhood can close the last link.
 > report, stalled a batch poster that was bidding the lowest priority fee of any
 > rollup and was already at its capacity ceiling. Transaction ingress failed while
 > the resulting backlog was at its worst.**
+>
+> **Correction, 2026-09-15 (later).** Two parts of that update overreach.
+>
+> - **"The lowest priority fee of any rollup"** should read "a bottom-of-market
+>   priority fee it did not raise". Arbitrum One's poster bid the same and stalled
+>   longer.
+> - **"While 22 other rollups kept posting"** is true, but none of the 22 was bidding
+>   near 0.001 gwei by then.
+>
+> The sentence becomes: **an Ethereum fee spike, set off by the US jobs report,
+> priced out every batch poster bidding near 0.001 gwei, Robinhood's among them. On
+> Robinhood, which was already at its posting capacity ceiling, the stall turned
+> into an 18-minute backlog. Transaction ingress failed while that backlog was at
+> its worst.**
 
 ## 8. What a monitor would have seen
 
@@ -787,6 +848,10 @@ risk on Sep 4 was visible there for days:
 
 - **The poster's tip was 0.001 gwei from at least Sep 1.** The other rollups whose
   blobs were included beside it paid about a thousand times more.
+  *(Correction, 2026-09-15 later: a thousand times the **median**. About 15% of
+  other blob transactions bid as low, and the spike priced them all out. The
+  risk is bidding in the bottom of the market without raising the bid when blocks
+  get competitive, not being the only low bidder.)*
 - **That data is public.** The poster's batch transactions and every other blob
   transaction are on Ethereum.
 
@@ -799,6 +864,40 @@ drops when Ethereum gets busy*.
 It is not implemented in `gasmon health`. Because it would have fired
 continuously before the incident, it describes a standing risk and gives no lead
 time.
+
+> **Update, 2026-09-15 (later): implemented and replayed.** `gasmon health`
+> implements it as `poster_underbid` (watch). The Chain health page and the
+> Overview's Ethereum strip show it.
+>
+> **Sample.** One full Ethereum block per 20 minutes from Sep 1 to Sep 14, plus every
+> block in the two replay windows: 2,311 blocks and 5,747 blob transactions. Plus
+> the poster's priority fee on all 3,507 decoded batches. The bids match the
+> receipt-derived `blob-txs-2026-09-04-1220_1250.csv` exactly (391 of 391), and the
+> poster fees match `batch-poster-fees-2026-09-01_14.csv` (945 of 945).
+>
+> **Rule.** At most 25% of other rollups' blob bids included over the past 24 hours
+> (regular samples only) were below the poster's priority fee.
+>
+> **Result.**
+>
+> - **One continuous episode from Sep 1 11:30:23 to Sep 4 20:00:23.** It starts
+>   once enough bids had been sampled, and ends at the last batch before the tip
+>   change. The market median ran 1,000× the poster's bid.
+> - **It was active through the whole incident**, not as a countdown but as the
+>   condition every live warning then built on.
+> - **After the fix it fired twice more, both weakly.** On Sep 5–7, at 0.5 gwei, the
+>   median was 2× the bid. On Sep 11 08:00–19:10, at 0.25 gwei, it was 4×. The
+>   Sep 11 stretch covers that day's 300 s stall. The market's 25th percentile rose
+>   from 0.012 to 0.1 gwei after Sep 4.
+>
+> **Caveats.**
+>
+> - **In-sample choices.** At 10% the rule yields only the Sep 1–4 episode, and at
+>   50% it fires all fortnight. The 25% threshold was fixed before these results, on
+>   a 60-block look. The 24 h window replaced 6 h after measuring that 6 h seldom
+>   held the 30 bids required. Both were chosen on this fortnight.
+> - **"Days before" is literal for this collection only.** The data starts on Sep 1,
+>   so the rule cannot show how long before that the bid had been 0.001 gwei.
 
 ## How it was traced
 

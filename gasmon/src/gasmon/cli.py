@@ -93,6 +93,9 @@ def build_parser():
     h.add_argument("--decode-every", type=int, default=600,
                    help="decode one batch per this many seconds outside dense windows")
     h.add_argument("--l1-every", type=int, default=300, help="sample an Ethereum header per this many seconds")
+    h.add_argument("--bids-every", type=int, default=1200,
+                   help="read one full Ethereum block per this many seconds for blob-market bids "
+                        "(every block inside dense windows)")
     h.add_argument("--l2-every", type=int, default=60, help="sample Robinhood receipts per this many seconds")
     h.add_argument("--dense-l2-every", type=int, default=10,
                    help="Robinhood receipt sampling inside dense windows, in seconds")
@@ -101,7 +104,7 @@ def build_parser():
                    help="parallel single-block receipt requests, spread over --rpc and --receipts-rpc")
     h.add_argument("--receipts-rpc", action="append", metavar="URL",
                    help="extra endpoint for receipt sampling; repeatable (default: robinhood.drpc.org)")
-    h.add_argument("--skip", action="append", choices=("batches", "decodes", "l1", "oracles", "l2"),
+    h.add_argument("--skip", action="append", choices=("batches", "decodes", "l1", "bids", "oracles", "l2"),
                    help="skip a source; repeatable")
     h.add_argument("--alerts-only", action="store_true", help="re-evaluate alerts without collecting")
     h.set_defaults(func=cmd_health, db="health.db")

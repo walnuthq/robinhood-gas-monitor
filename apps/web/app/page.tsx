@@ -2,6 +2,7 @@ import { AppSidebar } from "@/components/app-sidebar"
 import { DashboardView } from "@/components/dashboard-view"
 import { SiteHeader } from "@/components/site-header"
 import { getDashboardSnapshot } from "@/lib/gas/data"
+import { getEthereumLink } from "@/lib/health/data"
 import {
   SidebarInset,
   SidebarProvider,
@@ -19,14 +20,17 @@ export const metadata = {
  * data fetching, no runtime, nothing to wire.
  */
 export default async function Page() {
-  const snapshot = await getDashboardSnapshot()
+  const [snapshot, ethereumLink] = await Promise.all([
+    getDashboardSnapshot(),
+    getEthereumLink(),
+  ])
 
   return (
     <SidebarProvider>
       <AppSidebar />
       <SidebarInset>
         <SiteHeader />
-        <DashboardView snapshot={snapshot} />
+        <DashboardView snapshot={snapshot} ethereumLink={ethereumLink} />
       </SidebarInset>
     </SidebarProvider>
   )

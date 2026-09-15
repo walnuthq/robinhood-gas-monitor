@@ -1,14 +1,18 @@
 """Chain health: public, keyless signals that would have raised the alarm on the
 2026-09-04 incident, collected so any window can be replayed.
 
-Five sources, none needing traces:
+Six sources, none needing traces:
 
   batches         every SequencerBatchDelivered on Ethereum - the batch poster's
                   heartbeat. Gaps are poster stalls.
   batch_decodes   a sample of those batches decoded to the newest L2 block they
                   carry. Block time vs Ethereum time is the posting delay: how far
-                  the chain's data is from reaching L1.
+                  the chain's data is from reaching L1. Also the poster's bid:
+                  its priority fee and fee caps.
   l1_blocks       sampled Ethereum headers - base fee and utilisation.
+  l1_blob_txs     every blob transaction in sampled full Ethereum blocks - what the
+                  rest of the market bid to get its data in (l1_bid_blocks lists
+                  the blocks read, blobs or not).
   oracle_tx       every Chainlink OCR2 NewTransmission on Robinhood Chain. Block
                   time minus the report's observationsTimestamp is how long a
                   finished transaction took to get in: the write-path clock.
@@ -53,8 +57,19 @@ CREATE TABLE IF NOT EXISTS batch_decodes (
   seq INTEGER PRIMARY KEY, selector TEXT, prev_count INTEGER, new_count INTEGER,
   newest_l2_block INTEGER, newest_l2_ts INTEGER, posting_delay_s INTEGER,
   blobs INTEGER, max_fee_per_gas INTEGER, max_fee_per_blob_gas INTEGER,
-  reason TEXT                  -- sample | dense | gap_edge
+  reason TEXT,                 -- sample | dense | gap_edge
+  max_priority_fee_per_gas INTEGER
 );
+CREATE TABLE IF NOT EXISTS l1_bid_blocks (
+  number INTEGER PRIMARY KEY, ts INTEGER, base_fee INTEGER, txs INTEGER, blob_txs INTEGER,
+  reason TEXT                  -- sample | dense
+);
+CREATE INDEX IF NOT EXISTS ix_bid_blocks_ts ON l1_bid_blocks(ts);
+CREATE TABLE IF NOT EXISTS l1_blob_txs (
+  tx_hash TEXT PRIMARY KEY, block INTEGER, ts INTEGER, sender TEXT, inbox TEXT,
+  blobs INTEGER, tip INTEGER, max_fee INTEGER, max_blob_fee INTEGER
+);
+CREATE INDEX IF NOT EXISTS ix_blob_txs_ts ON l1_blob_txs(ts);
 CREATE TABLE IF NOT EXISTS l1_blocks (
   number INTEGER PRIMARY KEY, ts INTEGER, base_fee INTEGER, gas_used INTEGER,
   gas_limit INTEGER, blob_gas_used INTEGER, excess_blob_gas INTEGER
@@ -81,6 +96,19 @@ CREATE TABLE IF NOT EXISTS alerts (
 );
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 """
+
+# Columns added after databases already existed. CREATE TABLE IF NOT EXISTS leaves
+# an old table as it was, so each is added here when missing.
+MIGRATIONS = [("batch_decodes", "max_priority_fee_per_gas", "INTEGER")]
+
+INT64_MAX = 2**63 - 1   # some transactions set absurd fee caps; SQLite integers stop here
+
+
+def migrate(con):
+    for table, column, kind in MIGRATIONS:
+        if column not in {row[1] for row in con.execute(f"PRAGMA table_info({table})")}:
+            con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+    con.commit()
 
 
 def parse_time(value):
@@ -220,13 +248,42 @@ def collect_decodes(con, l1, l2, t_from, t_to, every, dense, workers):
         decoded = [d for d in decoded if d[3] - 1 in stamps]   # retried on the next run
         l1_ts = dict(con.execute(f"SELECT seq, l1_ts FROM batches WHERE seq IN ({','.join('?' * len(decoded))})",
                                  [d[0] for d in decoded]))
-        con.executemany("INSERT OR REPLACE INTO batch_decodes VALUES (?,?,?,?,?,?,?,?,?,?,?)", [
+        con.executemany("""INSERT OR REPLACE INTO batch_decodes
+            (seq, selector, prev_count, new_count, newest_l2_block, newest_l2_ts, posting_delay_s, blobs,
+             max_fee_per_gas, max_fee_per_blob_gas, reason, max_priority_fee_per_gas)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""", [
             (seq, tx["input"][:10], pc, nc, nc - 1, stamps[nc - 1], l1_ts[seq] - stamps[nc - 1],
-             len(tx.get("blobVersionedHashes") or []), h2i(tx.get("maxFeePerGas")), h2i(tx.get("maxFeePerBlobGas")), todo[seq])
+             len(tx.get("blobVersionedHashes") or []), h2i(tx.get("maxFeePerGas")), h2i(tx.get("maxFeePerBlobGas")), todo[seq],
+             h2i(tx.get("maxPriorityFeePerGas")))
             for seq, tx, pc, nc in decoded])
         con.commit()
         done += len(decoded)
     print(f"  batch decodes: {done:,} new, {con.execute('SELECT COUNT(*) FROM batch_decodes').fetchone()[0]:,} stored")
+    refill_decode_tips(con, l1, workers)
+
+
+def refill_decode_tips(con, l1, workers):
+    """Decodes stored before the poster's bid was recorded have no priority fee.
+    The transaction is the same one the decode read, so fetch it again."""
+    rows = con.execute("""SELECT d.seq, b.tx_hash FROM batch_decodes d JOIN batches b USING (seq)
+                          WHERE d.max_priority_fee_per_gas IS NULL""").fetchall()
+    if not rows:
+        return
+
+    def get(row):
+        try:
+            tx = l1.call("eth_getTransactionByHash", [row[1]])
+        except RpcError:
+            return None   # left NULL; the next run retries it
+        return (h2i(tx.get("maxPriorityFeePerGas")), row[0]) if tx else None
+
+    for i in range(0, len(rows), 500):
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            con.executemany("UPDATE batch_decodes SET max_priority_fee_per_gas = ? WHERE seq = ?",
+                            [r for r in pool.map(get, rows[i:i + 500]) if r])
+        con.commit()
+    left = con.execute("SELECT COUNT(*) FROM batch_decodes WHERE max_priority_fee_per_gas IS NULL").fetchone()[0]
+    print(f"  poster bids: {len(rows) - left:,} of {len(rows):,} older decodes refilled")
 
 
 def sample_blocks(lo, hi, stride, dense_blocks, dense_stride):
@@ -251,6 +308,53 @@ def collect_l1_blocks(con, l1, t_from, t_to, every, dense, workers):
             con.executemany("INSERT OR IGNORE INTO l1_blocks VALUES (?,?,?,?,?,?,?)", list(pool.map(get, todo[i:i + 500])))
         con.commit()
     print(f"  ethereum blocks: {len(todo):,} new, {con.execute('SELECT COUNT(*) FROM l1_blocks').fetchone()[0]:,} stored")
+
+
+def collect_l1_bids(con, l1, t_from, t_to, every, dense, workers):
+    """What the blob market paid to get in: every type-3 transaction in sampled full
+    Ethereum blocks, with the priority fee it actually paid.
+
+    A full block is ~100x a header, so this samples sparsely (one block per `every`
+    seconds, every block in dense windows). The poster's bid is a standing
+    property that changes rarely - three settings in Sep 1-14 - so a sparse market
+    sample is enough to rank it."""
+    lo, hi, _ = block_range(l1, t_from, t_to)
+    dense_blocks = [block_range(l1, a, b)[:2] for a, b in dense]
+    stride = max(1, every // 12)
+    have = {n for (n,) in con.execute("SELECT number FROM l1_bid_blocks")}
+    todo = [n for n in sample_blocks(lo, hi, stride, dense_blocks, 1) if n not in have]
+
+    def get(n):
+        try:
+            b = l1.call("eth_getBlockByNumber", [hex(n), True])
+        except RpcError:
+            return None   # the next run retries it
+        if not b:
+            return None
+        ts, base = h2i(b["timestamp"]), h2i(b.get("baseFeePerGas"))
+        blob_txs = []
+        for tx in b["transactions"]:
+            if h2i(tx.get("type")) != 3:
+                continue
+            max_fee = h2i(tx.get("maxFeePerGas"))
+            # What an included EIP-1559 transaction pays the proposer per gas.
+            tip = min(h2i(tx.get("maxPriorityFeePerGas")), max_fee - base)
+            blob_txs.append((tx["hash"], n, ts, tx["from"].lower(), (tx.get("to") or "").lower(),
+                             len(tx.get("blobVersionedHashes") or []), tip, min(max_fee, INT64_MAX),
+                             min(h2i(tx.get("maxFeePerBlobGas")), INT64_MAX)))
+        reason = "sample" if n % stride == 0 else "dense"
+        return (n, ts, base, len(b["transactions"]), len(blob_txs), reason), blob_txs
+
+    for i in range(0, len(todo), 200):
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            got = [g for g in pool.map(get, todo[i:i + 200]) if g]
+        con.executemany("INSERT OR IGNORE INTO l1_blob_txs VALUES (?,?,?,?,?,?,?,?,?)", [t for _, txs in got for t in txs])
+        con.executemany("INSERT OR IGNORE INTO l1_bid_blocks VALUES (?,?,?,?,?,?)", [blk for blk, _ in got])
+        con.commit()
+        if len(todo) > 200:
+            print(f"    {min(i + 200, len(todo)):,}/{len(todo):,} full blocks", flush=True)
+    print(f"  blob market: {len(todo):,} blocks read, "
+          f"{con.execute('SELECT COUNT(*) FROM l1_blob_txs').fetchone()[0]:,} blob transactions stored")
 
 
 def collect_oracles(con, l2, t_from, t_to, workers):
@@ -341,6 +445,44 @@ def episodes(fires, merge_gap, worst=max):
         else:
             out.append((start, end, peak))
     return out
+
+
+def rule_poster_underbid(con, quantile=0.25, window=24 * 3600, min_bids=30, merge_gap=3600):
+    """The poster bids at the bottom of the blob market: at most `quantile` of the
+    other blob transactions included over the past day bid less than its priority
+    fee.
+
+    Why a day: one full block per 20 minutes holds ~1.3 blob transactions, so a
+    six-hour window rarely reached `min_bids` and the rule went quiet for want of
+    data, not for want of risk. A day holds ~75-110.
+
+    A standing risk, not an alarm. In quiet blocks a bottom bid still gets in, so
+    nothing happens until Ethereum gets competitive - and then it is the first
+    thing builders drop. On Sep 4 the jobs-report spike priced out every poster
+    bidding near 0.001 gwei, Robinhood's and Arbitrum One's among them, while the
+    ones that raised their bid kept posting.
+
+    The market is the regularly sampled blocks only, so dense windows (chosen
+    because they were spikes) don't inflate it. The quarter threshold was chosen
+    after a 60-block look at Sep 1-14, where 13-18% of blob bids were 0.001 gwei or
+    less, and the window after the six-hour version was measured on the same
+    fortnight, so neither has been tested on data it has not seen. On Sep 1-4 the
+    result is the same at a tenth or a quarter."""
+    market = con.execute("""SELECT t.ts, t.tip FROM l1_blob_txs t JOIN l1_bid_blocks b ON b.number = t.block
+                            WHERE b.reason = 'sample' AND t.inbox <> ? ORDER BY t.ts""", (SEQUENCER_INBOX,)).fetchall()
+    ts = [m[0] for m in market]
+    tips = [m[1] for m in market]
+    bids = con.execute("""SELECT b.l1_ts, d.max_priority_fee_per_gas FROM batch_decodes d JOIN batches b USING (seq)
+                          WHERE d.max_priority_fee_per_gas IS NOT NULL ORDER BY b.l1_ts""").fetchall()
+    fires = []
+    for t, bid in bids:
+        window_tips = tips[bisect.bisect_left(ts, t - window):bisect.bisect_right(ts, t)]
+        if len(window_tips) < min_bids:
+            continue
+        below = sum(1 for tip in window_tips if tip < bid) / len(window_tips)
+        if below <= quantile:
+            fires.append((t, t, statistics.median(window_tips) / max(bid, 1)))
+    return episodes(fires, merge_gap)
 
 
 def rule_poster_silent(con, threshold=300):
@@ -461,6 +603,7 @@ def rule_bundler_failures(con, threshold=1.0, bin_s=300, min_n=5):
 
 RULES = [
     # name, severity, unit, function
+    ("poster_underbid", "watch", "x", rule_poster_underbid),
     ("poster_headroom", "watch", "s", rule_poster_headroom),
     ("poster_silent", "warn", "s", rule_poster_silent),
     ("posting_backlog", "warn", "s", rule_posting_backlog),
@@ -488,6 +631,7 @@ def cmd_health(args):
     import sqlite3
     con = sqlite3.connect(args.db, timeout=60)
     con.executescript(SCHEMA)
+    migrate(con)
 
     t_to = parse_time(args.to_time)
     t_from = parse_time(args.from_time) if args.from_time else t_to - 86400
@@ -504,6 +648,7 @@ def cmd_health(args):
             "batches": lambda: collect_batches(con, l1, t_from, t_to, args.workers),
             "decodes": lambda: collect_decodes(con, l1, l2, t_from, t_to, args.decode_every, dense, args.workers),
             "l1": lambda: collect_l1_blocks(con, l1, t_from, t_to, args.l1_every, dense, args.workers),
+            "bids": lambda: collect_l1_bids(con, l1, t_from, t_to, args.bids_every, dense, args.workers),
             "oracles": lambda: collect_oracles(con, l2, t_from, t_to, args.workers),
             "l2": lambda: collect_l2_samples(con, l2, receipts_rpc, t_from, t_to, args.l2_every, dense,
                                              args.dense_l2_every, args.receipt_workers),
@@ -524,6 +669,7 @@ def cmd_health(args):
             "requested_from": str(t_from), "requested_to": str(t_to),
             "dense_windows": json.dumps(dense),
             "decode_every_s": str(args.decode_every), "l1_every_s": str(args.l1_every),
+            "bids_every_s": str(args.bids_every),
             "l2_every_s": str(args.l2_every), "dense_l2_every_s": str(args.dense_l2_every),
         }
         con.executemany("INSERT OR REPLACE INTO meta VALUES (?,?)", list(meta.items()))

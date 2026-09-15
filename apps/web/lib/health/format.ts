@@ -42,6 +42,30 @@ export function formatDuration(seconds: number): string {
   return `${(seconds / 3600).toFixed(1)} h`
 }
 
+/**
+ * Bids are drawn on a log axis, which has no zero. Priority fees of 0 exist, so
+ * anything below this is drawn at it; the chart's caption says so.
+ */
+export const TIP_FLOOR_GWEI = 0.0005
+
+/** Log-axis ticks for bids, gwei. */
+export const TIP_TICKS = [0.001, 0.01, 0.1, 1, 10]
+
+/** A bid on an axis or in a tooltip, unit implied: 0.001, 0.25, 2.5, 10. */
+export function formatGweiValue(gwei: number): string {
+  if (gwei >= 10) return gwei.toFixed(0)
+  if (gwei >= 1) return gwei.toFixed(1)
+  return String(Number(gwei.toPrecision(2)))
+}
+
+/** 0.001 gwei, 0.25 gwei, 2.5 gwei: enough digits to tell bids three orders apart. */
+export function formatGwei(gwei: number): string {
+  if (gwei >= 10) return `${Math.round(gwei)} gwei`
+  if (gwei >= 1) return `${gwei.toFixed(1)} gwei`
+  if (gwei >= 0.01) return `${Number(gwei.toFixed(2))} gwei`
+  return `${Number(gwei.toPrecision(2))} gwei`
+}
+
 export function formatNumber(value: number, digits = 0): string {
   return new Intl.NumberFormat(LOCALE, {
     minimumFractionDigits: digits,

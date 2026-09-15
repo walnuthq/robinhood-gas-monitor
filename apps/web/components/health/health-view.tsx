@@ -25,14 +25,19 @@ import {
   formatClock,
   formatDay,
   formatDayClock,
-  formatDuration,
+  formatGweiValue,
   formatNumber,
+  TIP_FLOOR_GWEI,
+  TIP_TICKS,
 } from "@/lib/health/format"
-import { RULE_BY_ID, SEVERITY } from "@/lib/health/rules"
+import { HORIZONS, RULE_BY_ID, SEVERITY } from "@/lib/health/rules"
 import type {
   AlertEpisode,
   Annotation,
+  BidBand,
   HealthSnapshot,
+  Horizon,
+  PosterBid,
   ReplayWindow,
   RuleId,
   Severity,
@@ -79,11 +84,70 @@ function Section({
   return (
     <div className="grid gap-1">
       <div className="flex flex-wrap items-baseline gap-x-2 px-1">
-        <h3 className="text-sm font-medium">{title}</h3>
+        <h4 className="text-sm font-medium">{title}</h4>
         <p className="text-xs text-muted-foreground">{detail}</p>
       </div>
       {children}
     </div>
+  )
+}
+
+/**
+ * The charts in causal order, one layer at a time: Ethereum, then the batch
+ * poster that links the chain to it, then Robinhood's ingress, then users.
+ */
+function Layer({
+  title,
+  detail,
+  children,
+}: {
+  title: string
+  detail: string
+  children: React.ReactNode
+}) {
+  return (
+    <section className="grid gap-3 border-l-2 border-border pl-3">
+      <div className="grid gap-0.5">
+        <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+          {title}
+        </h3>
+        <p className="text-xs text-muted-foreground">{detail}</p>
+      </div>
+      {children}
+    </section>
+  )
+}
+
+/** Robinhood's bid against what the rest of the blob market paid, on one gwei axis. */
+function BidChart({
+  bids,
+  posterBids,
+  ...common
+}: {
+  bids: BidBand[]
+  posterBids: PosterBid[]
+  from: number
+  to: number
+  tickStepMs: number
+  markers?: Marker[]
+  withDate?: boolean
+  height?: number
+}) {
+  return (
+    <SignalChart
+      {...common}
+      line={posterBids.map((p) => ({ t: p.t, v: p.gwei }))}
+      band={bids.map((b) => ({ t: b.t, lo: b.p25, hi: b.p75 }))}
+      bandLabel="Other rollups, middle half"
+      step="after"
+      yScale="log"
+      yDomain={[TIP_FLOOR_GWEI, 20]}
+      yTicks={TIP_TICKS}
+      yFormat={formatGweiValue}
+      valueLabel="Robinhood's tip (gwei)"
+      emptyText="No blob-market sample for this window"
+      height={common.height ?? 190}
+    />
   )
 }
 
@@ -115,6 +179,48 @@ function markersFor(events: Event[]): Marker[] {
     tag: e.tag,
     color: e.alert ? SEVERITY[e.alert.severity].color : "var(--foreground)",
   }))
+}
+
+/**
+ * Days-before rules already firing when the window opens. They would have no
+ * marker in the window, so without this list a replay would look as if the
+ * monitor had said nothing until the first live warning.
+ */
+function StandingRisks({ replay }: { replay: ReplayWindow }) {
+  const standing = replay.alerts.filter(
+    (a) =>
+      RULE_BY_ID[a.rule].horizon === "days" &&
+      a.start < replay.from &&
+      a.end >= replay.from
+  )
+  return (
+    <div className="grid gap-2 rounded-lg border border-dashed px-3 py-2">
+      <span className="text-xs font-medium text-muted-foreground">
+        Already true when this window opens
+      </span>
+      {standing.length ? (
+        <ul className="grid gap-2">
+          {standing.map((a) => (
+            <li key={`${a.rule}${a.start}`} className="grid gap-0.5">
+              <span className="flex items-center gap-1.5 text-sm leading-snug">
+                <SeverityIcon
+                  severity={a.severity}
+                  className="size-3.5 shrink-0"
+                />
+                {RULE_BY_ID[a.rule].label}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                Since {formatDayClock(a.start)} ·{" "}
+                {RULE_BY_ID[a.rule].peakLabel(a.peak)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <span className="text-sm text-muted-foreground">No standing risk</span>
+      )}
+    </div>
+  )
 }
 
 function EventList({
@@ -184,80 +290,152 @@ function EventList({
   )
 }
 
-function Tiles({ snapshot }: { snapshot: HealthSnapshot }) {
+interface LeadItem {
+  alert: AlertEpisode
+  /** What to say about it, beyond the rule's label. */
+  detail: string
+}
+
+/**
+ * The page's argument in three columns: what the monitor would have said days
+ * before, minutes before, and during the Sep 4 incident. Standing risks are
+ * reported as stretches, never as lead times: they were true for days, so they
+ * say where to look, not when.
+ */
+function LeadTime({ snapshot }: { snapshot: HealthSnapshot }) {
   const incident = snapshot.replays.find((r) => r.id === "2026-09-04")
   const all = snapshot.fortnight.alerts
-  const firstOf = (rules: RuleId[]) =>
-    incident?.alerts
-      .filter((a) => rules.includes(a.rule) && a.start >= incident.from)
-      .sort((a, b) => a.start - b.start)[0]
-  const warn = firstOf(["poster_silent", "posting_backlog"])
-  const page = firstOf(["write_path"])
-  const pageDays = new Set(
-    all.filter((a) => a.rule === "write_path").map((a) => formatDay(a.start))
-  )
   const spanDays = Math.max(
     1,
     Math.round((snapshot.fortnight.to - snapshot.fortnight.from) / DAY)
   )
-  const stalls = snapshot.fortnight.silences
-  const longest = stalls.reduce(
-    (m, s) => (s.seconds > (m?.seconds ?? 0) ? s : m),
-    stalls[0]
+  const firstIn = (rules: RuleId[]) =>
+    incident?.alerts
+      .filter((a) => rules.includes(a.rule) && a.start >= incident.from)
+      .sort((a, b) => a.start - b.start)[0]
+  const timing = (t: number) =>
+    `${relativeTo(t, USERS_FAILING)} users started failing, ${relativeTo(t, REPORTED_HALT)} the reported halt`
+
+  // Days before: what was already true when the incident began.
+  const underbid = all.find(
+    (a) =>
+      a.rule === "poster_underbid" &&
+      a.start <= INCIDENT_PERIOD.from &&
+      a.end >= INCIDENT_PERIOD.from
+  )
+  const headroomBefore = all.filter(
+    (a) => a.rule === "poster_headroom" && a.start < INCIDENT_PERIOD.from
+  )
+  const headroomDays = new Set(headroomBefore.map((a) => formatDay(a.start)))
+  const lastHeadroom = headroomBefore.at(-1)
+
+  const warn = firstIn(["poster_silent", "posting_backlog"])
+  const spike = firstIn(["l1_fee_spike"])
+  const page = firstIn(["write_path"])
+  const impact = firstIn(["bundler_failures", "user_impact"])
+  const pageDays = new Set(
+    all.filter((a) => a.rule === "write_path").map((a) => formatDay(a.start))
   )
 
-  const tiles = [
+  const columns: {
+    horizon: Horizon
+    value: string
+    caption: string
+    items: LeadItem[]
+  }[] = [
     {
-      // The replay window, not the whole day: Sep 4 also warned at 09:20, with no impact.
-      label: "First warning, Sep 4 incident",
+      horizon: "days",
+      value: underbid ? `Since ${formatDay(underbid.start)}` : "—",
+      caption: underbid
+        ? "Standing risks, true for days: where to look, not when"
+        : "No standing risk was active when the incident began",
+      items: [
+        ...(underbid
+          ? [
+              {
+                alert: underbid,
+                detail: `${formatDayClock(underbid.start)} to ${formatDayClock(underbid.end)} · ${RULE_BY_ID.poster_underbid.peakLabel(underbid.peak)}`,
+              },
+            ]
+          : []),
+        ...(lastHeadroom
+          ? [
+              {
+                alert: lastHeadroom,
+                detail: `On ${headroomDays.size} of the days before · last lapsed ${formatDayClock(lastHeadroom.end)}`,
+              },
+            ]
+          : []),
+      ],
+    },
+    {
+      horizon: "minutes",
       value: warn ? formatClock(warn.start) : "—",
-      severity: "warn" as Severity,
-      detail: warn
-        ? `${relativeTo(warn.start, REPORTED_HALT)} the reported halt, ${relativeTo(warn.start, USERS_FAILING)} users started failing — ${RULE_BY_ID[warn.rule].label.toLowerCase()}`
-        : "No warning in the collected data",
+      caption: warn ? timing(warn.start) : "No warning in the collected data",
+      items: [warn, spike]
+        .filter((a): a is AlertEpisode => Boolean(a))
+        .sort((a, b) => a.start - b.start)
+        .map((a) => ({
+          alert: a,
+          detail: `${formatClock(a.start)} · ${RULE_BY_ID[a.rule].peakLabel(a.peak)}`,
+        })),
     },
     {
-      label: "Page: transactions dropped",
+      horizon: "during",
       value: page ? formatClock(page.start) : "—",
-      severity: "page" as Severity,
-      detail: page
-        ? `${relativeTo(page.start, REPORTED_HALT)} the reported halt, ${relativeTo(page.start, USERS_FAILING)} users started failing · fired on ${pageDays.size} of ${spanDays} days`
-        : "Did not fire",
-    },
-    {
-      label: "Batch poster stalls ≥ 5 min",
-      value: formatNumber(stalls.length),
-      severity: "warn" as Severity,
-      detail: longest
-        ? `Longest ${formatDuration(longest.seconds)}, ${formatDayClock(longest.from)} · over ${spanDays} days`
-        : `None in ${spanDays} days`,
-    },
-    {
-      label: "Chainlink transmissions checked",
-      value: formatNumber(snapshot.meta.transmissions),
-      severity: "context" as Severity,
-      detail: `Every one since ${formatDay(snapshot.meta.from)}, the clock that shows dropped transactions`,
+      caption: page
+        ? `${timing(page.start)} · paged on ${pageDays.size} of ${spanDays} days`
+        : "Did not page",
+      items: [page, impact]
+        .filter((a): a is AlertEpisode => Boolean(a))
+        .map((a) => ({
+          alert: a,
+          detail: `${formatClock(a.start)} · ${RULE_BY_ID[a.rule].peakLabel(a.peak)}`,
+        })),
     },
   ]
 
   return (
-    <div className="grid grid-cols-1 gap-4 @xl/main:grid-cols-2 @5xl/main:grid-cols-4">
-      {tiles.map((t) => (
-        <Card key={t.label} className="@container/card">
-          <CardHeader>
-            <CardDescription className="flex items-center gap-1.5">
-              <SeverityIcon severity={t.severity} className="size-3.5" />
-              {t.label}
-            </CardDescription>
-            <CardTitle className="text-2xl font-semibold @[16rem]/card:text-3xl">
-              {t.value}
-            </CardTitle>
-          </CardHeader>
-          <CardFooter className="text-xs text-muted-foreground">
-            {t.detail}
-          </CardFooter>
-        </Card>
-      ))}
+    <div className="grid grid-cols-1 gap-4 @3xl/main:grid-cols-3">
+      {columns.map((c) => {
+        const horizon = HORIZONS.find((h) => h.id === c.horizon)!
+        return (
+          <Card key={c.horizon} className="@container/card">
+            <CardHeader>
+              <CardDescription>
+                {horizon.label} · {horizon.detail}
+              </CardDescription>
+              <CardTitle className="text-2xl font-semibold tabular-nums @[16rem]/card:text-3xl">
+                {c.value}
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">{c.caption}</p>
+            </CardHeader>
+            <CardContent>
+              <ul className="grid gap-2">
+                {c.items.map((item) => (
+                  <li
+                    key={`${item.alert.rule}${item.alert.start}`}
+                    className="grid grid-cols-[1rem_1fr] gap-x-2"
+                  >
+                    <SeverityIcon
+                      severity={item.alert.severity}
+                      className="mt-0.5 size-3.5"
+                    />
+                    <div className="grid gap-0.5">
+                      <span className="text-sm leading-snug">
+                        {RULE_BY_ID[item.alert.rule].label}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {SEVERITY[item.alert.severity].label} · {item.detail}
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+        )
+      })}
     </div>
   )
 }
@@ -299,75 +477,106 @@ function Replay({ snapshot }: { snapshot: HealthSnapshot }) {
         </CardAction>
       </CardHeader>
       <CardContent className="grid gap-6 @5xl/replay:grid-cols-[minmax(0,1fr)_18rem]">
-        <div className="grid gap-4">
-          <Section
-            title="Ethereum base fee"
-            detail="Every Ethereum block · gwei"
+        <div className="grid gap-5">
+          <Layer
+            title="Ethereum"
+            detail="The market Robinhood's batches compete in"
           >
-            <SignalChart
-              {...common}
-              line={replay.fees.map((p) => ({ t: p.t, v: p.gwei }))}
-              yFormat={(v) => v.toFixed(v < 1 ? 2 : 1)}
-              valueLabel="Base fee (gwei)"
-            />
-          </Section>
-          <Section
-            title="Batch posting backlog"
-            detail="Age of the newest L2 block when each batch reached Ethereum · shaded: no batch for ≥ 2 min"
+            <Section
+              title="Ethereum base fee"
+              detail="Every Ethereum block · gwei"
+            >
+              <SignalChart
+                {...common}
+                line={replay.fees.map((p) => ({ t: p.t, v: p.gwei }))}
+                yFormat={(v) => v.toFixed(v < 1 ? 2 : 1)}
+                valueLabel="Base fee (gwei)"
+              />
+            </Section>
+            <Section
+              title="Robinhood's bid vs the blob market"
+              detail={`Line: the poster's priority fee, every batch · band: middle half (25th–75th percentile) of what other rollups' blobs paid to get in, 5-min bins · the watch holds while the line is at or under the band · gwei, log scale, floor ${TIP_FLOOR_GWEI}`}
+            >
+              <BidChart
+                {...common}
+                bids={replay.bids}
+                posterBids={replay.posterBids}
+              />
+            </Section>
+          </Layer>
+          <Layer
+            title="Batch poster"
+            detail="Robinhood Chain's link to Ethereum"
           >
-            <SignalChart
-              {...common}
-              line={replay.posting.map((p) => ({ t: p.t, v: p.delay }))}
-              shaded={replay.silences}
-              threshold={{ value: 600, label: "backlog alert · 10 min" }}
-              yFormat={delay}
-              yTicks={POSTING_TICKS}
-              valueLabel="Posting delay"
-            />
-          </Section>
-          <Section
-            title="Chainlink inclusion delay"
-            detail="Dots: each price update, block time − observation time · line: 5-min p90"
+            <Section
+              title="Batch posting backlog"
+              detail="Age of the newest L2 block when each batch reached Ethereum · shaded: no batch for ≥ 2 min"
+            >
+              <SignalChart
+                {...common}
+                line={replay.posting.map((p) => ({ t: p.t, v: p.delay }))}
+                shaded={replay.silences}
+                threshold={{ value: 600, label: "backlog alert · 10 min" }}
+                yFormat={delay}
+                yTicks={POSTING_TICKS}
+                valueLabel="Posting delay"
+              />
+            </Section>
+          </Layer>
+          <Layer
+            title="Robinhood ingress"
+            detail="Whether submitted transactions get in"
           >
-            <SignalChart
-              {...common}
-              line={replay.oracleBins.map((b) => ({ t: b.t, v: b.p90 }))}
-              dots={replay.oracle.map((p) => ({ t: p.t, v: p.delay }))}
-              step
-              threshold={{ value: 120, label: "page · p90 120 s" }}
-              yFormat={delay}
-              yTicks={INCLUSION_TICKS}
-              valueLabel="p90 inclusion delay"
-            />
-          </Section>
-          <Section
-            title="Successful transactions"
-            detail="Per sampled block, 1-min mean"
-          >
-            <SignalChart
-              {...common}
-              line={replay.traffic.map((p) => ({ t: p.t, v: p.ok }))}
-              yFormat={(v) => v.toFixed(0)}
-              valueLabel="Successful tx per block"
-            />
-          </Section>
-          <Section
-            title="Failed ERC-4337 bundles"
-            detail="Per sampled block, 1-min mean"
-          >
-            <SignalChart
-              {...common}
-              line={replay.traffic.map((p) => ({ t: p.t, v: p.bundlesFailed }))}
-              threshold={{ value: 1, label: "impact · 1 per block" }}
-              yFormat={(v) => v.toFixed(1)}
-              valueLabel="Failed bundles per block"
-            />
-          </Section>
+            <Section
+              title="Chainlink inclusion delay"
+              detail="Dots: each price update, block time − observation time · line: 5-min p90"
+            >
+              <SignalChart
+                {...common}
+                line={replay.oracleBins.map((b) => ({ t: b.t, v: b.p90 }))}
+                dots={replay.oracle.map((p) => ({ t: p.t, v: p.delay }))}
+                step
+                threshold={{ value: 120, label: "page · p90 120 s" }}
+                yFormat={delay}
+                yTicks={INCLUSION_TICKS}
+                valueLabel="p90 inclusion delay"
+              />
+            </Section>
+          </Layer>
+          <Layer title="Users" detail="What they experienced">
+            <Section
+              title="Successful transactions"
+              detail="Per sampled block, 1-min mean"
+            >
+              <SignalChart
+                {...common}
+                line={replay.traffic.map((p) => ({ t: p.t, v: p.ok }))}
+                yFormat={(v) => v.toFixed(0)}
+                valueLabel="Successful tx per block"
+              />
+            </Section>
+            <Section
+              title="Failed ERC-4337 bundles"
+              detail="Per sampled block, 1-min mean"
+            >
+              <SignalChart
+                {...common}
+                line={replay.traffic.map((p) => ({
+                  t: p.t,
+                  v: p.bundlesFailed,
+                }))}
+                threshold={{ value: 1, label: "impact · 1 per block" }}
+                yFormat={(v) => v.toFixed(1)}
+                valueLabel="Failed bundles per block"
+              />
+            </Section>
+          </Layer>
         </div>
         <div className="grid content-start gap-3">
           <h3 className="px-1 text-sm font-medium">
             What a monitor would have said
           </h3>
+          <StandingRisks replay={replay} />
           <EventList events={events} reportedHalt={reportedHalt} />
         </div>
       </CardContent>
@@ -425,12 +634,26 @@ function Fortnight({ snapshot }: { snapshot: HealthSnapshot }) {
           {daysFiring(f.alerts, "warn")}.
         </CardDescription>
         <CardAction className="hidden flex-wrap justify-end gap-3 sm:flex">
-          {(["warn", "page", "impact", "context"] as Severity[]).map((s) => (
-            <SeverityBadge key={s} severity={s} />
-          ))}
+          {(["watch", "warn", "page", "impact", "context"] as Severity[]).map(
+            (s) => (
+              <SeverityBadge key={s} severity={s} />
+            )
+          )}
         </CardAction>
       </CardHeader>
       <CardContent className="grid gap-4">
+        <Section
+          title="Robinhood's bid vs the blob market"
+          detail={`Line: the poster's priority fee, hourly · band: middle half (25th–75th percentile) of other rollups' blob bids, 6-h bins of sampled blocks · gwei, log scale · watch markers: bottom of the market`}
+        >
+          <BidChart
+            {...common}
+            bids={f.bids}
+            posterBids={f.posterBids}
+            markers={markersOf(["poster_underbid"])}
+            height={180}
+          />
+        </Section>
         <Section
           title="Batch posting delay"
           detail="One batch every 10 min · warn markers: poster silent ≥ 5 min, backlog ≥ 10 min"
@@ -507,7 +730,7 @@ export function HealthView({ snapshot }: { snapshot: HealthSnapshot }) {
 
   return (
     <div className="@container/main flex flex-1 flex-col gap-4 p-4 lg:gap-6 lg:p-6">
-      <Tiles snapshot={snapshot} />
+      <LeadTime snapshot={snapshot} />
       <Replay snapshot={snapshot} />
       <RulesTable
         snapshot={snapshot}
@@ -524,9 +747,12 @@ export function HealthView({ snapshot }: { snapshot: HealthSnapshot }) {
         {formatNumber(m.decodes)} decoded (1 per {m.decodeEverySeconds / 60}{" "}
         min, plus every batch in the replay windows and either side of every
         stall), {formatNumber(m.ethereumBlocks)} blocks (1 per{" "}
-        {m.ethereumEverySeconds / 60} min, every block in the replay windows) ·
-        Robinhood Chain: {formatNumber(m.transmissions)} Chainlink transmissions
-        (all), {formatNumber(m.robinhoodSamples)} receipt samples (1 per{" "}
+        {m.ethereumEverySeconds / 60} min, every block in the replay windows),{" "}
+        {formatNumber(m.blobTxs)} blob transactions in{" "}
+        {formatNumber(m.bidBlocks)} full blocks (1 per {m.bidsEverySeconds / 60}{" "}
+        min, every block in the replay windows) · Robinhood Chain:{" "}
+        {formatNumber(m.transmissions)} Chainlink transmissions (all),{" "}
+        {formatNumber(m.robinhoodSamples)} receipt samples (1 per{" "}
         {m.robinhoodEverySeconds} s) · collected {formatDayClock(m.collectedAt)}{" "}
         UTC from {m.l1Rpc.replace("https://", "")} and{" "}
         {m.l2Rpc.replace("https://", "")}

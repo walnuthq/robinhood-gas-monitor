@@ -25,7 +25,7 @@ import {
 
 import { SeverityBadge } from "@/components/health/severity-badge"
 import { formatDayClock, formatDuration } from "@/lib/health/format"
-import { RULE_BY_ID, SEVERITY } from "@/lib/health/rules"
+import { HORIZON_LABEL, RULE_BY_ID, SEVERITY } from "@/lib/health/rules"
 import type { AlertEpisode } from "@/lib/health/types"
 
 type Filter = "alerts" | "all"
@@ -86,7 +86,14 @@ export function AlertLog({ alerts }: { alerts: AlertEpisode[] }) {
                   <TableCell>
                     <SeverityBadge severity={a.severity} />
                   </TableCell>
-                  <TableCell className="font-medium">{rule.label}</TableCell>
+                  <TableCell>
+                    <div className="grid gap-0.5">
+                      <span className="font-medium">{rule.label}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {HORIZON_LABEL[rule.horizon]}
+                      </span>
+                    </div>
+                  </TableCell>
                   <TableCell className="font-mono text-xs tabular-nums">
                     {formatDayClock(a.start)}
                   </TableCell>

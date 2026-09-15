@@ -368,3 +368,50 @@ window, although Sep 4 had also warned at 09:20. The page now derives such
 sentences from the alerts. The rules table counts episodes outside the incident
 period rather than other *days*, so a false alarm on the incident's own date
 still shows.
+
+### The Ethereum link (2026-09-15)
+
+The page is now organised by lead time: days before, minutes before, during. Its
+replay charts are grouped by layer: Ethereum, then the batch poster, then
+Robinhood's ingress, then users. A new chart puts the poster's priority fee
+against what other rollups' blobs paid to get in. The Overview gained an
+"Ethereum settlement" strip read from `health.db`.
+
+**recharts 3 `Area` takes no per-series `data` either.** A ranged area is an
+`Area` whose `dataKey` returns `[low, high]`, and it reads the chart's `data`
+like `Line` does. A band and a line sampled at different times therefore have to
+be merged into one row set sorted by time. Each row carries `v`, `range` or
+both, and `connectNulls` goes on both series. Without it the line breaks at
+every band-only row. The tooltip then has to cope with rows that hold only one of
+the two.
+
+**A log axis has no zero, and priority fees of 0 are real.** `scale="log"` with
+the default domain and a value of 0 yields `-Infinity`, and the series silently
+fails to draw. Pass an explicit `domain` with `allowDataOverflow`, explicit
+ticks (0.001, 0.01, 0.1, 1 and 10 gwei), and clamp data to a floor (0.0005 gwei).
+The chart's caption states the floor.
+
+**Server-only modules can't donate constants.** `lib/health/data.ts` reaches
+`node:sqlite` at import time, so a client component importing a constant from it
+pulls the SQLite shim into the browser bundle. Shared constants (the tip floor,
+axis ticks) live in `lib/health/format.ts`.
+
+**A standing risk has no marker in a replay window.** `poster_underbid` started on
+Sep 1, so none of its markers fall inside Sep 4 12:10–13:40, and the numbered
+event list began at 12:34:47, as if nothing had been said until then. The replay
+therefore lists the "days before" rules already active when the window opens. The
+rules table counts such an episode as the incident's own rather than as a false
+alarm.
+
+**Two databases, two clocks.** The Overview's gas figures come from `gas.db` and
+its Ethereum strip from `health.db`, and they were collected at different times.
+Each states its own "as of", rather than implying one snapshot.
+
+**Make the band encode the rule.** The first bid chart drew the market's
+10th–50th percentile per minute. Blocks carry only ~1–2 blob transactions, so
+each minute's percentiles swung between 0.001 and 5 gwei. Robinhood's 0.001 gwei
+line sat on the band's floor, where it read as normal. The chart now draws the
+middle half (25th–75th percentile), stepped per bin: 5 minutes in replays (~30
+bids), 6 hours over the fortnight (~24 sampled bids). `poster_underbid` fires when
+at most a quarter of the market bids lower, which is exactly when the line sits
+at or under the band. The rule and the picture now say the same thing.
