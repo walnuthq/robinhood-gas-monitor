@@ -122,29 +122,37 @@ def cmd_diff(args):
     blo, bhi = _range(args.b)
 
     def load(lo, hi):
-        gas = con.execute("SELECT SUM(gas_used), SUM(tx_count) FROM blocks WHERE number BETWEEN ? AND ?",
-                          (lo, hi)).fetchone()
+        gas = con.execute("SELECT SUM(gas_used), SUM(tx_count), COUNT(*) FROM blocks "
+                          "WHERE number BETWEEN ? AND ?", (lo, hi)).fetchone()
         agg = {r[0]: r for r in con.execute(AGG_SQL, (lo, hi))}
         return gas, agg
 
-    (agas, atx), aagg = load(alo, ahi)
-    (bgas, btx), bagg = load(blo, bhi)
+    (agas, atx, ablk), aagg = load(alo, ahi)
+    (bgas, btx, bblk), bagg = load(blo, bhi)
     if not agas or not bgas:
         print("one of the ranges has no collected blocks")
         return
-    print(f"\nA: blocks {alo}..{ahi}  {agas:,} gas over {atx:,} txs  = {agas/max(atx,1):,.0f} gas/tx")
-    print(f"B: blocks {blo}..{bhi}  {bgas:,} gas over {btx:,} txs  = {bgas/max(btx,1):,.0f} gas/tx")
-    print(f"   gas/tx change: {(bgas/max(btx,1))/(agas/max(atx,1)):.2f}x\n")
+    for tag, lo, hi, gas, tx, blk in (("A", alo, ahi, agas, atx, ablk), ("B", blo, bhi, bgas, btx, bblk)):
+        print(f"{tag}: blocks {lo}..{hi}  {blk:,} blocks, {gas:,} gas over {tx:,} txs  "
+              f"= {gas/max(tx,1):,.0f} gas/tx, {gas/blk:,.0f} gas/block")
+    print(f"   gas/tx change: {(bgas/max(btx,1))/(agas/max(atx,1)):.2f}x   "
+          f"gas/block change: {(bgas/bblk)/(agas/ablk):.2f}x\n")
 
+    # Per transaction, a busier range does not dominate: it shows what changed in
+    # the mix. Per block, it does: it shows whose volume came or went, which a
+    # proportional loss of traffic would leave invisible per transaction.
+    an, bn = (atx, btx) if args.per == "tx" else (ablk, bblk)
     keys = set(aagg) | set(bagg)
     rows = []
     for k in keys:
-        # Normalise by transaction count so a busier range does not dominate.
-        a = (aagg[k][2] / atx) if k in aagg and atx else 0
-        b = (bagg[k][2] / btx) if k in bagg and btx else 0
-        sample = (bagg.get(k) or aagg.get(k))[6]
-        rows.append((b - a, a, b, sample, k))
+        a = (aagg[k][2] / an) if k in aagg and an else 0
+        b = (bagg[k][2] / bn) if k in bagg and bn else 0
+        ref = bagg.get(k) or aagg.get(k)
+        label = f"{ref[9]} ({ref[6][:10]}…)" if ref[9] else (ref[6] or k)
+        rows.append((b - a, a, b, label))
     rows.sort(key=lambda r: -abs(r[0]))
-    print(f"{'delta gas/tx':>13} {'A gas/tx':>11} {'B gas/tx':>11}  contract")
-    for d, a, b, sample, k in rows[: args.limit]:
-        print(f"{d:>+13,.0f} {a:>11,.0f} {b:>11,.0f}  {sample or k}")
+    unit = f"gas/{args.per}"
+    print(f"{'delta ' + unit:>15} {'A ' + unit:>13} {'B ' + unit:>13}  {'B/A':>6}  contract")
+    for d, a, b, label in rows[: args.limit]:
+        ratio = f"{b/a:.2f}" if a else "new"
+        print(f"{d:>+15,.0f} {a:>13,.0f} {b:>13,.0f}  {ratio:>6}  {label}")

@@ -9,6 +9,7 @@ import {
   Database,
   Fuel,
   Gauge,
+  HeartPulse,
   Layers,
   PackagePlus,
   Settings2,
@@ -39,7 +40,8 @@ import {
  * shape of the product is legible in the prototype.
  */
 const analysis = [
-  { title: "Overview", icon: Gauge, href: "/", active: true },
+  { id: "overview", title: "Overview", icon: Gauge, href: "/" },
+  { id: "health", title: "Chain health", icon: HeartPulse, href: "/health" },
   { title: "Contracts", icon: Boxes, href: "#", badge: "3.4k" },
   { title: "Functions", icon: Braces, href: "#" },
   { title: "Deployments", icon: PackagePlus, href: "#" },
@@ -56,7 +58,11 @@ const collector = [
   { title: "Settings", icon: Settings2, href: "#" },
 ]
 
-export function AppSidebar() {
+/** Which page is showing. Passed by each page rather than read from the URL, so
+ *  the sidebar stays a Server Component. */
+export type SidebarPage = "overview" | "health"
+
+export function AppSidebar({ active = "overview" }: { active?: SidebarPage }) {
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
@@ -87,7 +93,7 @@ export function AppSidebar() {
               {analysis.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton
-                    isActive={item.active}
+                    isActive={"id" in item && item.id === active}
                     tooltip={item.title}
                     render={<Link href={item.href} />}
                   >

@@ -1,8 +1,9 @@
 # Robinhood Chain reconnaissance: access, gas model, and what it changes
 
-**Status:** internal — 2026-09-08
+**Status:** internal — 2026-09-08, with dated corrections through 2026-09-14
 **Companion to:** [gas-monitor-approach-review.md](gas-monitor-approach-review.md),
-[robinhood-chain-gas-monitor.md](robinhood-chain-gas-monitor.md)
+[robinhood-chain-gas-monitor.md](robinhood-chain-gas-monitor.md),
+[robinhood-chain-2026-09-04-incident.md](robinhood-chain-2026-09-04-incident.md)
 
 Everything below was measured against Robinhood Chain mainnet on 2026-09-08.
 Sample sizes are stated per finding; where a number rests on a single block it
@@ -34,6 +35,27 @@ One finding changes the schedule: **the fee peak has already passed.** Revenue
 topped out at $8.36M/day on 2026-09-04 and is down 74% since. See
 [Cross-check: growthepie](#cross-check-growthepie).
 
+> **Update, 2026-09-14.** Four findings from this week change the document below,
+> each recorded as a dated correction where it applies. Their data is in
+> [`data/recon-2026-09-14/`](data/recon-2026-09-14/) and
+> [`data/incident-2026-09-04/`](data/incident-2026-09-04/).
+>
+> - **History is reachable after all.** `robinhood.drpc.org` serves archive
+>   traces back to launch, keylessly, including the 09-04 peak.
+>   [Endpoints](#rpc-endpoints-and-which-ones-trace).
+> - **L1 data pricing never "switched on".** It bursts on and off, and has done
+>   since at least 09-01. The 09-11 correction below over-read a burst.
+>   Sampled across 09-01 to 09-14 it is well under 1% of gas.
+>   [§3](#3-gasusedforl1-is-zero--l1-data-cost-is-not-charged).
+> - **Revert waste is not low.** It is 6.55% of gas and 13.9% of transactions over
+>   962 blocks, not the 0.5% of one block. [Revert waste](#revert-waste-is-low).
+> - **The reported 09-04 block-production halt is not in the blocks.** The chain
+>   kept producing blocks while throughput collapsed ~60% for 17 minutes. Traces
+>   put the whole episode at 12:37–13:20. Ethereum and Chainlink data then traced
+>   it to an Ethereum fee spike that stalled the batch poster, followed by dropped
+>   transactions at ingress. It also likely explains the L1 pricing bursts. See
+>   [robinhood-chain-2026-09-04-incident.md](robinhood-chain-2026-09-04-incident.md).
+
 ## Identity and access
 
 | | |
@@ -61,6 +83,39 @@ sweep. Sourcify's own chain registry lists drPC as the trace-capable provider fo
 documents Robinhood support; either is the natural pay-as-you-go choice. The
 official and publicnode endpoints also rate-limit ordinary `eth_*` batches at 200
 requests, so batch in 25–40 and back off.
+
+> **Correction, 2026-09-14 — archive traces are reachable keylessly, and GetBlock's
+> public endpoint is not a route to them.** `rpc.ordofi.network` now reports its
+> own retention as "roughly the last 1.2M blocks — about a day and a half", so the
+> 09-04 fee peak (~8.5M blocks back) is out of its reach. Every public 4663
+> endpoint listed by [CompareNodes](https://www.comparenodes.com/library/public-endpoints/robinhood/)
+> was asked to trace block 54,282,091 (2026-09-04 12:57 UTC):
+>
+> | Endpoint | `debug_traceBlockByNumber` (callTracer) at 54,282,091 |
+> | --- | --- |
+> | **`robinhood.drpc.org`** | **✓ 0.7 s, 384 KB; also traces block 100,000 (launch week)** |
+> | `robinhood-mainnet.gateway.tatum.io`, `rpc-robinhood.blockmachine.io` | ✓ byte-identical response, presumably the same upstream |
+> | `rpc.ordofi.network` | ✗ predates its ~1.2M-block retention |
+> | `shared.us-east-1.getblock.io/…` (GetBlock shared) | ✗ `historical state is not available` |
+> | publicnode, NodeFlare public, SolidRPC public, BlockReq | ✗ `debug_*` not served |
+> | bloXroute / Tenderly | 403 / 429 |
+>
+> drPC's output passes all four conservation checks in `gasmon verify` (9 blocks,
+> 73 transactions, 2,092 frames, 54,282,000–54,282,400). Archive `eth_getCode`,
+> `eth_getBalance` and `eth_call` at old blocks also work. Keyless throughput was
+> **~0.6 s/block serially and 2.6 blocks/s at 4 workers** (20-block runs), roughly
+> 10× ordofi.
+>
+> Do not build on the keyless endpoint. drPC documents trace and debug methods as
+> disabled on its free tier, so this access may be withdrawn. It already
+> **returns HTTP 500 for any JSON-RPC batch of 5 or more** (3 always worked),
+> and 2 of 11 trace calls failed once. drPC's pay-as-you-go plan is $6 per
+> million requests at a flat 20 CU for any method, trace included
+> ([dRPC, May 2025](https://blog.drpc.org/announcing-flat-pricing-simple-transparent-fair/)).
+> Its paid rate and batch limits are not yet measured. Chainstack (paid plan,
+> Global Node), Dwellir, QuickNode and SolidRPC (keyed) all document archive
+> `debug_*` for 4663 but need keys and are untested; one of them is the natural
+> cross-check.
 
 ### Verified sources
 
@@ -217,6 +272,65 @@ execution gas** — but see the correction below: it is not identically zero.
 > against 0.25 gwei on 09-08. Re-measure the L1 share before publishing any
 > figure that depends on it.
 
+> **Third correction, 2026-09-14 — it was a burst, not a switch-on.** The second
+> correction rested on four blocks. Archive state makes it possible to read the
+> pricer's history directly, and it shows no change of setting around 09-11. It
+> shows the same intermittent behaviour the first correction described, on every
+> day since at least 09-01.
+>
+> `getL1BaseFeeEstimate()`, read hourly from archive state (324 samples,
+> 2026-08-31 23:18 → 09-14 11:09 UTC, via `robinhood.drpc.org`):
+>
+> ```
+> day    hours non-zero   max estimate (wei)
+> 09-01   4 / 24            10,765,376
+> 09-02   2 / 24           135,680,011
+> 09-03   3 / 24            57,129,582
+> 09-04   2 / 24           143,995,461
+> 09-05   2 / 24            11,064,709
+> 09-06   5 / 24            12,309,173
+> 09-07   1 / 24             1,010,775
+> 09-08   5 / 24            25,535,027
+> 09-09   5 / 24            16,212,330
+> 09-10   5 / 24            11,398,167
+> 09-11   3 / 24            14,159,807
+> 09-12   0 / 23                     0
+> 09-13   0 / 24                     0
+> 09-14   0 / 12                     0
+> ```
+>
+> The pricer was non-zero in **37 of 264 hourly samples** from 09-01 to 09-11, and
+> zero in all **70** since 09-11 12:45 UTC. Minute-resolution reads on 09-04 show
+> single bursts lasting 5–8 minutes. The 09-08 precompile reading of 0 and the
+> 09-11 reading of 264,924,236 wei are both consistent with this: the first caught
+> a quiet hour, the second a burst.
+>
+> What users actually paid, from receipts, one block every ~20 minutes (962 blocks,
+> 12,805 transactions, 08-31 23:18 → 09-14 11:44 UTC):
+>
+> ```
+> L1 data gas, all sampled blocks              0.182% of gas   (135 of 962 blocks non-zero)
+>   of which one block (60,322,000, 09-11 14:19 UTC)   38.45% of that block's gas
+> L1 data gas excluding that block             0.016%
+> largest day                                  09-11, 2.58%
+> blocks with L1 gas after 09-11 14:19 UTC     0 of 205
+> ```
+>
+> Bursts are rare and occasionally heavy, so a 20-minute sample cannot pin the
+> average tighter than **well under 1% of gas**. That is the figure to use, with
+> the sample stated. Consequences:
+>
+> - **Flaw #7 goes back to where the first correction left it:** a rounding error
+>   on average. `gasUsedForL1` still has to be stripped per transaction, because
+>   inside a burst it can reach 38% of a block.
+> - **The 1% gate in `gasmon verify` fires on burst blocks, not on a regime
+>   change.** A failure means "this sample contains a burst". Report the share; do
+>   not read it as a trend.
+> - **The calldata-size argument above is weaker than stated.** With L1 data at
+>   well under 1% of gas averaged, calldata matters mainly through the intrinsic
+>   16-gas-per-byte charge, not through L1 pricing. Keep it as a secondary lever,
+>   not a headline.
+
 Consequences:
 
 - Flaw #7 of the approach review — "Arbitrum folds L1 data cost into `gasUsed`,
@@ -301,6 +415,12 @@ invalidate the project — the chain is still the highest-revenue chain tracked 
 its base fee is still ~17× its floor — but it does mean the report's framing
 should not depend on fees continuing to rise, and publication speed matters more
 than the memo already argued.
+
+> **Note, 2026-09-14.** The peak day is also the day of the widely reported
+> "14-minute block-production halt" at 12:57 UTC. Block data shows no halt. It
+> shows a ~60% throughput collapse from 12:50 to 13:06, made up of missing
+> *successful* transactions while reverting traffic continued. See
+> [robinhood-chain-2026-09-04-incident.md](robinhood-chain-2026-09-04-incident.md).
 
 ### Congestion is a gas-per-transaction problem, not a volume problem
 
@@ -501,6 +621,15 @@ speculated in the approach review is **not supported** by this sample. Worth
 re-measuring over a wider window before dropping it, but do not plan the report
 around it.
 
+> **Correction, 2026-09-14 — revert waste is material.** Re-measured from receipts,
+> one block every ~20 minutes from 08-31 23:18 to 09-14 11:44 UTC (962 blocks,
+> 12,805 transactions): **6.55% of gas and 13.94% of transactions reverted.** It
+> varies widely by day, 3.0% to 13.7% of gas, and **40.4% of transactions on
+> 09-10**. The single-block 0.5% was unrepresentative. Reverted gas buys nothing,
+> so it deserves a section in the report, kept separate from the optimisation
+> figures because it is not a codegen saving. Whether it is the sniping bots the
+> approach review speculated about is for the per-contract ranking to say.
+
 ## Scale, with real numbers
 
 At the corrected 11.2M tx/day (7-day mean), 48 hours is **22.5M transactions**.
@@ -531,6 +660,14 @@ any sane cost. Three ways out, in order of preference:
 
 Start with (1) and (2) for the report; (3) is a product decision, not a report
 decision.
+
+> **Note, 2026-09-14.** The 7.3 s/block figure is ordofi's. drPC's archive endpoint
+> traced at ~0.6 s/block serially and 2.6 blocks/s with 4 workers, so a 48-hour
+> census is ~7.6 days at that rate rather than ~145. That is still not worth doing
+> when sampling suffices, but it makes weeks-long stride samples cheap. At drPC's
+> $6 per million requests, request cost is negligible next to bandwidth: payload
+> was 246 KB/block in 20 blocks at 21 Mgas/s, and the 26 KB/transaction payload
+> figure above still stands.
 
 ## What this changes
 
@@ -582,6 +719,9 @@ Against the memo:
 2. Can we reach the **Blockscout verification API** without Cloudflare blocking?
    Determines the true source-coverage ceiling.
 3. Is **L1 pricing off permanently**, or a launch-period setting?
+   *Answered 2026-09-14: neither. It bursts on and off, and has done every day
+   from 09-01 to 09-11. No burst has been sampled since 09-11 14:19 UTC. See the
+   third correction in §3.*
 4. What are the **top-10 contracts**? They are half the chain's gas and this
    sample already names them; identifying them by product is the next step and is
    most of the report's narrative.
@@ -599,7 +739,12 @@ Against the memo:
 
 ```bash
 RH=https://rpc.mainnet.chain.robinhood.com     # eth_* only
-TRACE=https://rpc.ordofi.network               # debug_* works here
+TRACE=https://rpc.ordofi.network               # debug_* works here, last ~1.2M blocks
+ARCHIVE=https://robinhood.drpc.org             # debug_* and state at any height (2026-09-14); batches <= 3
+
+# L1 pricer at a historical block (hourly reads of this built the §3 table)
+cast call 0x000000000000000000000000000000000000006c "getL1BaseFeeEstimate()(uint256)" \
+  --block 54279200 --rpc-url $ARCHIVE
 
 # Identity
 curl -s -X POST $RH -H 'Content-Type: application/json' \

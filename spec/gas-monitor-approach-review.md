@@ -23,6 +23,12 @@ generally *worse* than on Gnosis: naive-aggregation inflation is 4.79× rather t
 [robinhood-chain-recon.md](robinhood-chain-recon.md) has those numbers and the
 chain's gas model in full; this document is otherwise unchanged.
 
+**Update, 2026-09-14.** Flaw 7 briefly looked re-opened when L1 pricing appeared
+to switch on on 09-11. Archive history shows it was a burst: L1 data gas is well
+under 1% of gas sampled across 09-01 to 09-14, so the withdrawal stands. Flaw 8's
+pay-as-you-go recommendation is now measured: drPC serves archive traces, and
+GetBlock's public endpoint does not. Notes are inline under each.
+
 ## Summary
 
 | # | Flaw | Measured impact | Severity |
@@ -274,6 +280,15 @@ which is about L1 data:
 of the stack. Re-read `getL1BaseFeeEstimate()` on every run and alert if it goes
 non-zero; the attribution model changes if it does.
 
+> **Note, 2026-09-14.** "Switched off" was too strong, and so was the 09-11
+> reading that it had switched on. The pricer bursts: it was non-zero in 37 of
+> 264 hourly archive reads from 09-01 to 09-11, and zero in all 70 since. Receipts
+> sampled every ~20 minutes (962 blocks) put L1 data gas at 0.18% of gas, nearly
+> all of it one block at 38%, or 0.016% without that block. On average it remains
+> a rounding error, so the withdrawal stands. Within a burst it is not, which is
+> why the collector strips `gasUsedForL1` per transaction. Detail in the recon's
+> [third §3 correction](robinhood-chain-recon.md#3-gasusedforl1-is-zero--l1-data-cost-is-not-charged).
+
 See [robinhood-chain-recon.md](robinhood-chain-recon.md) for the full gas model.
 
 ## 8. ~~The two unknowns that gate everything~~ — resolved
@@ -288,6 +303,12 @@ See [robinhood-chain-recon.md](robinhood-chain-recon.md) for the full gas model.
   adequate for prototyping, not for a 48-hour sweep. Sourcify's chain registry
   names drPC as the trace-capable provider for 4663; that or GetBlock is the
   pay-as-you-go route.
+  *2026-09-14: measured. ordofi keeps only ~1.2M blocks (~1.4 days).
+  `robinhood.drpc.org` traces any height back to launch, even keylessly, and its
+  output passes the conservation checks. GetBlock's shared public endpoint has no
+  historical state. drPC pay-as-you-go ($6 per million requests, flat across
+  methods) is the route; see the
+  [recon's endpoint correction](robinhood-chain-recon.md#rpc-endpoints-and-which-ones-trace).*
 - **Is there a verified-source registry?** Yes. Sourcify marks chain 4663
   `"supported": true` (and `"etherscanAPI": false` — Etherscan does not index this
   chain). Lookups against `sourcify.dev/server/v2/contract/4663/<address>` work

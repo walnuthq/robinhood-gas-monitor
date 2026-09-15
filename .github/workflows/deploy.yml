@@ -1,8 +1,9 @@
 name: Deploy dashboard to GitHub Pages
 
-# The gas database is committed, so a deploy is a pure build: no chain access,
+# The databases are committed, so a deploy is a pure build: no chain access,
 # no collector run, nothing to rate-limit. Refresh the data with
-# `pnpm gas:refresh` and commit `apps/web/data/gas.db` to publish new numbers.
+# `pnpm gas:refresh` / `pnpm health:refresh` and commit `apps/web/data/gas.db` /
+# `apps/web/data/health.db` to publish new numbers.
 
 on:
   push:
@@ -32,27 +33,31 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          # `node:sqlite` is read at build time by the dashboard's Server
-          # Components. It landed in 22.5 and is stable from 24.
+          # Matches "engines": { "node": ">=24" } in package.json. `node:sqlite`
+          # is read at build time by the dashboard's Server Components.
           node-version: 24
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Fail early if the gas database is missing
+      - name: Fail early if a database is missing
+        # Without one the build still succeeds, and the page ships an empty state.
         run: |
-          if [ ! -f apps/web/data/gas.db ]; then
-            echo "apps/web/data/gas.db is not committed — the build would have no data."
-            echo "Run 'pnpm gas:refresh' locally and commit the result."
-            exit 1
-          fi
-          echo "database: $(du -h apps/web/data/gas.db | cut -f1)"
+          for pair in gas.db:gas:refresh health.db:health:refresh; do
+            db="apps/web/data/${pair%%:*}"
+            if [ ! -f "$db" ]; then
+              echo "$db is not committed — the build would have no data."
+              echo "Run 'pnpm ${pair#*:}' locally and commit the result."
+              exit 1
+            fi
+            echo "database: $db $(du -h "$db" | cut -f1)"
+          done
 
       - run: pnpm typecheck
       - run: pnpm lint
@@ -78,7 +83,7 @@ jobs:
         # site loads with no CSS or JS.
         run: touch apps/web/out/.nojekyll
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: apps/web/out
 
@@ -90,4 +95,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

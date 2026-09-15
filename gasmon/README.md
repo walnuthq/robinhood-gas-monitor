@@ -65,11 +65,12 @@ gasmon top --limit 20 --db gas.db
 
 | | |
 | --- | --- |
-| `collect` | Trace blocks and decompose their gas. `--last N`, or `--from-block`/`--to-block` with optional `--stride` to sample. Re-running skips blocks already stored. |
+| `collect` | Trace blocks and decompose their gas. `--last N`, or `--from-block`/`--to-block` with optional `--stride` to sample. Re-running skips blocks already stored. `--exact-code` reads code from the archive at the analysed block before falling back to `latest` — use it for windows older than a few hours. |
 | `verify` | Run the five identity checks and print the gas decomposition. |
 | `sources` | Resolve Sourcify verification for the top `--limit` code identities, by gas. |
 | `top` | Rank code identities by self-gas. `--range LO-HI` to scope. |
-| `diff` | Compare two block ranges, normalised per transaction — the spike-vs-baseline view. |
+| `diff` | Compare two block ranges — the spike-vs-baseline view. `--per tx` (default) shows what changed in the mix; `--per block` shows whose volume came or went, which a proportional loss of traffic leaves invisible per transaction. |
+| `health` | Collect chain-health signals into a separate database and evaluate alert rules on them. Needs no traces; see [Chain health](#chain-health). |
 
 Sampling is the intended mode for anything longer than a few minutes of chain
 time. An hour of Robinhood Chain is ~35,600 blocks at ~7 s/block to trace; gas is
@@ -79,6 +80,73 @@ ranks the leaders correctly at a fraction of the cost.
 ```bash
 gasmon collect --from-block 58380817 --to-block 58416417 --stride 100
 ```
+
+## Chain health
+
+`gasmon health` collects the public signals that would have alerted on the
+2026-09-04 incident, and evaluates alert rules on them. It shares nothing with the
+gas tables and writes its own database (default `health.db`). It needs no trace
+endpoint: every source is logs, headers or receipts, all keyless. The evidence for
+each rule is in
+[`../spec/robinhood-chain-2026-09-04-incident.md`](../spec/robinhood-chain-2026-09-04-incident.md),
+sections 7 and 8.
+
+```bash
+gasmon health --db health.db --from 2026-09-01T00:00:00Z --to now \
+  --dense 2026-09-04T11:30:00Z/2026-09-04T14:30:00Z
+```
+
+| Table | Source | Collected |
+| --- | --- | --- |
+| `batches` | `SequencerBatchDelivered` on Ethereum (SequencerInbox `0xBd0D…ba96`) | every one |
+| `batch_decodes` | batch calldata → newest L2 block → posting delay | one per `--decode-every` s, every batch in `--dense` windows, and the batches either side of every gap ≥ 120 s |
+| `l1_blocks` | Ethereum headers: base fee, utilisation, blob gas | one per `--l1-every` s, every block in dense windows |
+| `oracle_tx` | Chainlink OCR2 `NewTransmission`: block time − `observationsTimestamp` | every one |
+| `l2_samples` | Robinhood receipts: successful, reverted, failed ERC-4337 bundles | one block per `--l2-every` s, per `--dense-l2-every` s in dense windows |
+| `alerts` | the rules below, evaluated over everything stored | recomputed every run |
+
+Rules, in order of loudness. Each fires only on data available at the moment it
+fires, so a replay is what a live monitor would have done:
+
+The last two columns come from the Sep 1 00:00 – Sep 14 20:32 UTC backfill. Its
+samples are listed in the incident spec's §8. "Outside" means starting outside Sep 4
+12:30–17:15:
+
+| Rule | Severity | Fires when | Sep 4 incident | Outside, Sep 1–14 |
+| --- | --- | --- | --- | --- |
+| `poster_headroom` | watch | median posting delay over the past 2 h ≥ 240 s (first decoded batch per 20-min slot) | 12:40 (lapsed 10:40–12:40) | 7 episodes on 6 days |
+| `l1_fee_spike` | context | Ethereum base fee ≥ 5× the median 5–15 min earlier | 12:35:11 | 7 |
+| `poster_silent` | warn | no batch reaches Ethereum for 300 s (fires at the 300th second) | 12:34:47 | 3 |
+| `posting_backlog` | warn | the newest L2 block on Ethereum is ≥ 600 s old | 12:35:55 | 1 (Sep 4 09:20) |
+| `write_path` | page | 5-min p90 Chainlink inclusion delay ≥ 120 s over ≥ 5 transmissions (fires as the bin closes) | 12:45 | none |
+| `bundler_failures` | impact | ≥ 1 failed EntryPoint bundle per sampled block over 5 min | 12:50 | 1 |
+| `user_impact` | impact | successful tx per block < 50% of the previous 2 h median, two 5-min bins running | 13:00 | none |
+
+`bundler_failures` sits near its threshold in the first minutes, so its fire time
+moves with the sampled blocks (a smoke run over other blocks fired at 12:40).
+`user_impact` needs two bins in a row because one bin alone fired 53 times on 12
+other days. That choice was made on this same fortnight and is untested
+out of sample.
+
+Re-runs are incremental: log sources record the block ranges they have fetched
+(`coverage`), sampled sources skip rows already stored, and `--alerts-only`
+re-evaluates without touching the network. It also leaves `meta` describing the
+last collection (`collected_at` is what the page prints as freshness) and records
+`alerts_evaluated_at` instead. `pnpm health:refresh` wraps this for the dashboard.
+
+Endpoint facts this relies on, all measured 2026-09-14:
+
+- Keyless `eth.drpc.org` serves Ethereum `eth_getLogs` over ≤ 100-block ranges,
+  with a real `blockTimestamp`.
+- Robinhood's official endpoint serves `eth_getLogs` over 50,000-block ranges at any
+  age. It includes `blockTimestamp` too, but **as `0x0` for history**, so the
+  collector fetches block times rather than trusting a zero.
+- The official endpoint also answers parallel batches with 429s. Receipt sampling
+  therefore sends single-block `eth_getBlockReceipts` requests round-robin over
+  the official endpoint and `robinhood.drpc.org` (`--receipts-rpc`), six workers,
+  with a larger retry budget. Batched requests to the official endpoint alone
+  managed ~1 block/s. This layout sustained 5.8 blocks/s over 20,780 blocks on
+  2026-09-14. A block that still fails is skipped and filled on the next run.
 
 ## Data model
 
@@ -140,6 +208,14 @@ every transaction. L1 data gas is not execution and is not reducible by better
 codegen, so a rising share directly weakens the case for compiler optimisation.
 Watch it.
 
+> **Correction, 2026-09-14.** That was a burst, not a trend. ArbOS's L1 pricer
+> switches on for minutes at a time, several times a day, and 09-11 caught one.
+> Sampled every ~20 minutes across 09-01 to 09-14 (962 blocks), L1 data gas is
+> 0.18% of gas, and 0.016% without a single 38% block. A failure of this check
+> means the sample contains a burst. Read the reported share; don't read it as a
+> regime change. See the third §3 correction in
+> [`robinhood-chain-recon.md`](../spec/robinhood-chain-recon.md).
+
 ## Operational notes
 
 **Endpoints are not interchangeable.** The official Robinhood RPC serves `eth_*`
@@ -158,8 +234,37 @@ gasmon collect --last 200 \
 unreachable without a paid archive node — the September 2026 fee peak already is.
 Collect continuously, or pay for archive.
 
+> **Correction, 2026-09-14.** ordofi's retention is ~1.2M blocks, which is ~1.4
+> days, not 2–3. The fee peak is **not** unreachable: `https://robinhood.drpc.org`
+> traces any height back to launch, keylessly as of today, and its output passes
+> `verify`. It is ~10× faster than ordofi (2.6 blocks/s at 4 workers). Two traps
+> when using it as `--trace-rpc`:
+>
+> - **It returns HTTP 500 for any JSON-RPC batch of 5 or more.** `collect`
+>   round-robins its `eth_*` batches (one receipt request per transaction) across
+>   `--rpc` and `--trace-rpc`, so blocks whose batch lands on drPC report
+>   `FAILED`. Re-run to fill them, since stored blocks are skipped. A paid drPC
+>   key, or keeping batches off the trace endpoint, avoids this.
+> - **Code resolves at `latest` for old windows.** The official `--rpc` has no
+>   state at a days-old block, so `resolve_code` falls back to `latest` before
+>   trying the archive. For a historical window, check `code.block_read = -1` and
+>   prefer the archive read.
+>
+> For volume, use drPC's paid plan ($6 per million requests, flat across methods).
+>
+> *Later on 2026-09-14: both traps are fixed in the collector.* The RPC client now
+> keeps a batch ceiling per endpoint, halving it whenever a batch is refused, so
+> round-robined batches fit drPC's limit. Receipts come from one
+> `eth_getBlockReceipts` per block where the node supports it. `--exact-code`
+> reads the archive before `latest`. Re-collecting 11 blocks at 54,282,000–400
+> went from 2 of 11 failed to 11 of 11 with identical gas totals, and 0 of 244
+> addresses read at `latest`.
+
 **Rate limits.** Both endpoints throttle; batches over ~40 get 429s. The client
-round-robins and backs off. `--workers 4` is comfortable.
+round-robins and backs off. `--workers 4` is comfortable. Batch ceilings are
+per endpoint and learned: a batch refused whole (HTTP 500, or an error object in
+place of a result list) halves that endpoint's ceiling and is re-cut, so an
+endpoint that only takes small batches still works in the rotation.
 
 ## Known limitations
 
@@ -174,7 +279,10 @@ round-robins and backs off. `--workers 4` is comfortable.
   expect it to match a block explorer.
 - **Code is read at the analysed block**, not `latest`, so CREATE2 redeploys and
   7702 re-delegations can't corrupt history. If the node has no state at that
-  height it falls back to `latest` and prints a warning.
+  height it falls back to `latest` and prints a warning. By default `latest` is
+  tried before the archive, because the free archive answers `eth_getCode` slowly;
+  `--exact-code` reverses that, and is the right choice against a fast archive.
+  Rows read at `latest` carry `code.block_read = -1`.
 - **Arbitrum deposit/retryable transaction types** (`0x64`–`0x69`) don't follow
   the L1 intrinsic-gas formula; they're flagged via `txs.intrinsic_standard = 0`.
   ArbOS internal transactions (`0x6a`) are recorded but never attributed.
@@ -195,6 +303,7 @@ gasmon/
     ├── collect.py    tracing and decomposition
     ├── sources.py    Sourcify resolution, EIP-7702 delegates
     ├── report.py     verify / top / diff
+    ├── health.py     chain-health sources, alert rules
     └── cli.py        argument parsing
 ```
 

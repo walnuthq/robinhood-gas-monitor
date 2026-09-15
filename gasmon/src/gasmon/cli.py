@@ -5,12 +5,14 @@
   gasmon sources                resolve Sourcify verification
   gasmon top                    rank code by self-gas
   gasmon diff --a … --b …       compare two block ranges
+  gasmon health --from … --to … collect chain-health signals and evaluate alerts
 """
 
 import argparse
 import sys
 
 from .collect import cmd_collect
+from .health import L1_RPC_DEFAULT, cmd_health
 from .report import cmd_diff, cmd_top, cmd_verify
 from .rpc import RPC_DEFAULT, TRACE_DEFAULT
 from .sources import cmd_sources
@@ -45,6 +47,9 @@ def build_parser():
     c.add_argument("--to-block", type=int)
     c.add_argument("--stride", type=int, default=1, help="sample every Nth block")
     c.add_argument("--workers", type=int, default=4)
+    c.add_argument("--exact-code", action="store_true",
+                   help="read code at the analysed block from --trace-rpc before falling "
+                        "back to 'latest'; for windows older than a few hours on a fast archive")
     c.set_defaults(func=cmd_collect)
 
     v = sub.add_parser("verify", parents=[common], help="run the identity checks")
@@ -71,7 +76,35 @@ def build_parser():
     d.add_argument("--a", required=True, help="baseline range LO-HI")
     d.add_argument("--b", required=True, help="comparison range LO-HI")
     d.add_argument("--limit", type=int, default=25)
+    d.add_argument("--per", choices=("tx", "block"), default="tx",
+                   help="normalise per transaction (what changed in the mix) or per block "
+                        "(what changed in volume); default %(default)s")
     d.set_defaults(func=cmd_diff)
+
+    h = sub.add_parser("health", parents=[common],
+                       help="collect chain-health signals (batch posting, oracle inclusion delay, "
+                            "fees, receipts) and evaluate alert rules")
+    h.add_argument("--from", dest="from_time", default=None,
+                   help="start, ISO 8601 UTC (default: 24 hours before --to)")
+    h.add_argument("--to", dest="to_time", default="now", help="end, ISO 8601 UTC or 'now'")
+    h.add_argument("--dense", action="append", metavar="FROM/TO",
+                   help="a window to collect at full resolution; repeatable")
+    h.add_argument("--l1-rpc", default=L1_RPC_DEFAULT, help="Ethereum endpoint (default: %(default)s)")
+    h.add_argument("--decode-every", type=int, default=600,
+                   help="decode one batch per this many seconds outside dense windows")
+    h.add_argument("--l1-every", type=int, default=300, help="sample an Ethereum header per this many seconds")
+    h.add_argument("--l2-every", type=int, default=60, help="sample Robinhood receipts per this many seconds")
+    h.add_argument("--dense-l2-every", type=int, default=10,
+                   help="Robinhood receipt sampling inside dense windows, in seconds")
+    h.add_argument("--workers", type=int, default=4)
+    h.add_argument("--receipt-workers", type=int, default=6,
+                   help="parallel single-block receipt requests, spread over --rpc and --receipts-rpc")
+    h.add_argument("--receipts-rpc", action="append", metavar="URL",
+                   help="extra endpoint for receipt sampling; repeatable (default: robinhood.drpc.org)")
+    h.add_argument("--skip", action="append", choices=("batches", "decodes", "l1", "oracles", "l2"),
+                   help="skip a source; repeatable")
+    h.add_argument("--alerts-only", action="store_true", help="re-evaluate alerts without collecting")
+    h.set_defaults(func=cmd_health, db="health.db")
     return p
 
 

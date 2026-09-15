@@ -6,3 +6,27 @@ allowBuilds:
   sharp: true
   unrs-resolver: true
   msw: false
+  # Arrived with the 2026-09 dependency bump; its postinstall fetches the
+  # platform-specific binary, so it has to run.
+  esbuild: true
+
+# shadcn's transitive `open` published within pnpm's minimumReleaseAge window.
+# Pinning the previous patch satisfies the supply-chain guard without weakening
+# it for everything else.
+overrides:
+  open: 11.0.2
+
+minimumReleaseAgeExclude:
+  - '@next/env@16.3.5'
+  - '@next/eslint-plugin-next@16.3.5'
+  - '@next/swc-darwin-arm64@16.3.5'
+  - '@next/swc-darwin-x64@16.3.5'
+  - '@next/swc-linux-arm64-gnu@16.3.5'
+  - '@next/swc-linux-arm64-musl@16.3.5'
+  - '@next/swc-linux-x64-gnu@16.3.5'
+  - '@next/swc-linux-x64-musl@16.3.5'
+  - '@next/swc-win32-arm64-msvc@16.3.5'
+  - '@next/swc-win32-x64-msvc@16.3.5'
+  - lucide-react@1.45.0
+  - next@16.3.5
+  - zod@4.6.2

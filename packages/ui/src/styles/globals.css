@@ -3,8 +3,13 @@
 @import "shadcn/tailwind.css";
 
 @custom-variant dark (&:is(.dark *));
-@source "../../../apps/**/*.{ts,tsx}";
-@source "../../../components/**/*.{ts,tsx}";
+/* Paths are relative to this file (packages/ui/src/styles/), so the repo root
+   is four levels up. The template shipped these one level short: they pointed
+   at packages/apps and packages/components, neither of which exists, and
+   Tailwind ignored them silently. A root-level components directory never
+   existed either - app components live inside each app and the apps glob
+   already covers them. */
+@source "../../../../apps/**/*.{ts,tsx}";
 @source "../**/*.{ts,tsx}";
 
 @theme inline {

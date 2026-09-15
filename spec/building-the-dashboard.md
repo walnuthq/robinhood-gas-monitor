@@ -53,6 +53,34 @@ spreads `...props` onto the underlying anchor for exactly this reason, with
   buttons render tooltips, so the provider has to wrap the app in
   `app/layout.tsx` or they throw.
 
+## 2b. Tailwind `@source` paths, and a comment that eats the stylesheet
+
+`packages/ui/src/styles/globals.css` shipped two `@source` globs that were one
+level short — they resolved to `packages/apps/` and `packages/components/`,
+neither of which exists, and Tailwind ignored them **silently**. Paths are
+relative to the CSS file, so from `packages/ui/src/styles/` the repo root is
+four levels up, not three.
+
+Correcting them changed the compiled CSS by **zero bytes** (88,445 bytes, 499
+selectors, before and after), because Tailwind v4's automatic source detection
+was already covering `apps/web`. So this is dead config rather than a bug — but
+verify that way round before assuming a glob is load-bearing.
+
+**The trap while fixing it:** a CSS comment explaining the paths contained the
+literal `apps/*/components`. The `*/` in that path **closed the comment early**,
+the rest parsed as garbage, and the stylesheet fell from 88 KB to 4 KB — the
+page renders unstyled with only a PostCSS stack trace deep in the build output.
+Never write a glob containing `*/` inside a `/* … */` comment.
+
+**How to verify any stylesheet change:** diff the compiled selectors rather than
+eyeballing the page.
+
+```bash
+pnpm build && find .next/static -name '*.css' | head -1 | xargs cat \
+  | grep -o '\.[a-zA-Z@][-a-zA-Z0-9_\\:/@.\[\]%]*' | sort -u > after.txt
+comm -23 before.txt after.txt   # anything here is a class you just lost
+```
+
 ## 3. The `use-mobile` hook must not set state in an effect
 
 The stock shadcn implementation (`useState` + `useEffect` + `setIsMobile`) trips
@@ -208,6 +236,45 @@ how the UI may talk about its own numbers.
   `/block/` work, `/transaction/` and `/blocks/` both 404. Robinscan's block
   pages 500 on recent blocks, which is their indexer lagging, not a bad URL.
 
+## 11b. pnpm 12, and where settings actually live
+
+The repo is pinned to `pnpm@12.4.1` via `packageManager`, with `engines.node >= 24`.
+Three things changed under pnpm 12 that cost time:
+
+- **The `pnpm` field in `package.json` is no longer read.** Overrides and other
+  settings now live in `pnpm-workspace.yaml`. pnpm warns, but the setting is
+  simply ignored — put an override in the wrong file and it silently does
+  nothing.
+- **A supply-chain policy blocks freshly published packages.** `minimumReleaseAge`
+  rejected `open@11.0.3` (published hours earlier, pulled in transitively by
+  `shadcn`). The right fix is an `overrides:` pin to the previous patch, which
+  satisfies the guard rather than disabling it; `minimumReleaseAgeExclude` is the
+  escape hatch pnpm maintains itself for versions you pinned deliberately. Note
+  the lockfile is validated *before* re-resolution, so a new override needs
+  `pnpm clean --lockfile` (or deleting the lockfile) to take effect.
+- **Build scripts are deny-by-default** via `allowBuilds` in
+  `pnpm-workspace.yaml`. A new dependency whose postinstall matters — `esbuild`
+  fetching its platform binary — fails the install until listed. pnpm appends a
+  placeholder line (`esbuild: set this to true or false`) when it errors, so
+  editing the file yourself can leave a duplicate YAML key.
+
+## 11c. Two majors that are available and should not be taken
+
+Checked 2026-09-11, with every dependency otherwise pinned to the newest release
+inside its current major:
+
+- **ESLint 10** installs but breaks linting. `typescript-eslint` and
+  `eslint-plugin-react-hooks` both declare `^10.0.0`, but
+  `eslint-plugin-react@7.37.5` — the newest published — supports only `^9.7` and
+  throws `TypeError: contextOrFilename.getFilename is not a function` on
+  `react/display-name`. Stay on `eslint@9.39.5` until `eslint-plugin-react`
+  ships ESLint 10 support, even though pnpm now marks 9.x deprecated.
+- **TypeScript 7** is blocked by peer ranges: `typescript-eslint@8.70.0`
+  requires `typescript >=4.8.4 <6.1.0`. Stay on `5.9.3`.
+
+Re-check both before assuming they are still blocked — the fix is one upstream
+release away in each case.
+
 ## 12. Environment and tooling
 
 - `pnpm gas:refresh` → `scripts/collect-gas-data.mjs`. Knobs: `BLOCKS`,
@@ -218,3 +285,86 @@ how the UI may talk about its own numbers.
 - The database is **committed** (~34 MB after `VACUUM`) so CI builds need no
   chain access. At `BLOCKS=300` it approaches 50 MB, where GitHub starts warning
   — at that point commit an aggregated extract instead of the full frame table.
+
+## 13. The Chain health page (2026-09-14)
+
+`/health` replays the 2026-09-04 incident from public signals and shows every
+alert the rules would have raised over the collection. Data comes from
+`gasmon health` (see `gasmon/README.md`, "Chain health") via
+`pnpm health:refresh` → `apps/web/data/health.db`. The page reads it through
+`lib/health/data.ts`, the same kind of seam as `lib/gas/data.ts`.
+
+**`blockTimestamp` of `0x0` is not a timestamp.** Robinhood's official RPC
+includes `blockTimestamp` on every log, but for history its value is `0x0`.
+Parsing it produced 12,292 Chainlink transmissions all dated 1970 and negative
+inclusion delays — **silent**, since a zero parses fine. Ethereum logs from
+`eth.drpc.org` carry real values. The collector fetches block times whenever the
+field is zero, on both chains. Check a value, not just that the key exists.
+
+**recharts 3 `Line` takes no per-series `data`; `Scatter` does.** A chart that
+overlays individual observations (the grey dots) on a derived line (the p90 step)
+passes the line's rows as the `ComposedChart` data and the dots as `Scatter data`.
+`YAxis dataKey` must name a key both datasets share.
+
+**`syncId` does not sync a numeric time axis.** It matches by data index or by
+category value. Stacked charts with different sampling (every Ethereum block,
+every batch, 1-min receipt means) share an x-domain, but each keeps its own
+crosshair. Don't add `syncId` expecting a shared cursor: it lines up unrelated
+indices and moves the tooltip to the wrong time.
+
+**The chart ramp does not flip in dark mode, so pick the accent per mode.**
+`--chart-1…5` are identical in light and dark (§5). A single step that reads on one
+card vanishes on the other. Measured: `--chart-4` is 9.42:1 on the light card and
+1.80:1 on the dark one; `--chart-1` is 1.43:1 and 11.82:1. `SignalChart` sets
+`[--health-accent:var(--chart-4)] dark:[--health-accent:var(--chart-1)]` on the
+`ChartContainer` and points the series colour at `var(--health-accent)`.
+
+**Status colours are reserved, and one is below 3:1.** Alert markers use the
+dataviz status steps: warning `#fab219`, serious `#ec835a`, critical `#d03b3b`.
+Warning measures 1.83:1 on the light card, so severity always renders as icon plus
+label (`SeverityBadge`). Chart markers carry a number or letter keyed to the event
+list, never colour alone.
+
+**Close markers need staggered tags.** On Sep 4, four markers fall within ~2
+minutes of a 90-minute window, and their tags printed as `123A`. `SignalChart`
+assigns each tag to the first row whose previous tag is ≥ 2.5% of the domain away,
+and grows the top margin by 11 px per row used.
+
+**Mixed units on a delay axis read as noise.** recharts' own ticks gave
+`0 s · 400 s · 13 min · 20 min`. Delay charts pass explicit `yTicks` (multiples of
+5 min for posting delay, of 60 s for inclusion delay), formatted as seconds below
+2 min and minutes above.
+
+**Functions do not cross the server → client boundary.** Rule metadata carries
+formatting functions (`peakLabel`), so `lib/health/rules.ts` is imported by the
+client components directly. It is not passed through the snapshot the server
+component builds.
+
+**The database accumulates; it is not replaced.** Unlike `gas.db`, `health.db`
+keeps growing: history is what the replay windows are made of. `health:refresh`
+starts an hour before the newest stored batch and the collector skips what it has.
+The mtime-keyed handle still matters, because writes change the file under
+`next dev`. Declare `HEALTH_DB` in `turbo.json` like `GAS_DB`; lint warns
+otherwise.
+
+**Don't build against a database being written.** The Sep 1–14 backfill took ~1¾
+hours. The log and header sources took 44 minutes (Chainlink alone 21), and
+20,780 receipt samples took another 62. To preview the page mid-collection, copy
+the database with SQLite's online
+backup and point `HEALTH_DB` at the copy. A read-only open of the live file can
+hit `SQLITE_BUSY` while the collector commits.
+
+**Payload.** With the full collection the page embeds two dense replay windows
+(every Ethereum block, every batch and every transmission) and a binned
+fortnight. It exported at 284 KB of HTML before receipt samples were added, and
+at 464 KB with the full Sep 1–14 collection (a 12 MB database).
+
+**Hard-coded claims go stale as the database grows.** The first build's fortnight
+card said only the write-path page stayed quiet outside the incident. That went
+stale as soon as the traffic rule was tightened to two bins and went quiet too. A
+tile
+labelled "first warning on Sep 4" actually showed the first warning in the replay
+window, although Sep 4 had also warned at 09:20. The page now derives such
+sentences from the alerts. The rules table counts episodes outside the incident
+period rather than other *days*, so a false alarm on the incident's own date
+still shows.

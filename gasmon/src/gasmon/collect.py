@@ -28,7 +28,7 @@ def collect_block(rpc, trace_rpc, number):
                 "txs": [], "frames": []}
 
     traced = trace_rpc.call("debug_traceBlockByNumber", [hex(number), {"tracer": "callTracer"}])
-    receipts = rpc.batch([("eth_getTransactionReceipt", [t["hash"]]) for t in txs])
+    receipts = _block_receipts(rpc, number, txs)
 
     by_hash = {t["hash"]: t for t in txs}
     rcpt_by_hash = {r["transactionHash"]: r for r in receipts if r}
@@ -112,10 +112,24 @@ def collect_block(rpc, trace_rpc, number):
         "txs": tx_rows, "frames": frame_rows,
     }
 
+def _block_receipts(rpc, number, txs):
+    """All of a block's receipts. One eth_getBlockReceipts where the node has it:
+    a single request rather than a batch per transaction, which is both lighter
+    on a rate-limited node and immune to batch ceilings. Falls back to
+    per-transaction receipts for nodes without the method."""
+    try:
+        receipts = rpc.call("eth_getBlockReceipts", [hex(number)])
+    except RpcError:
+        receipts = None
+    if receipts is not None and len(receipts) == len(txs):
+        return receipts
+    return rpc.batch([("eth_getTransactionReceipt", [t["hash"]]) for t in txs])
+
+
 CODE_BATCH = 50
 
 
-def resolve_code(fast_rpc, archive_rpc, con, addrs, block):
+def resolve_code(fast_rpc, archive_rpc, con, addrs, block, exact=False, workers=1):
     """Populate the code cache. Code is read AT the analysed block where
     possible - CREATE2 redeploys and EIP-7702 delegations make 'latest' wrong
     for history.
@@ -125,34 +139,41 @@ def resolve_code(fast_rpc, archive_rpc, con, addrs, block):
     25 and 66.5s for 40, while the official endpoint answered all 40 in 2.6s.
     But the official node keeps no state beyond a few hours, so the order is:
     fast node at the block, fast node at `latest`, archive node at the block.
-    Only the last is correct *and* slow, so it is the last resort."""
+    Only the last is correct *and* slow, so it is the last resort.
+
+    `exact` moves the archive read ahead of `latest`. Use it for windows older
+    than the fast node's few hours of state when the archive is quick - drPC
+    answers in well under a second - because that is where `latest` goes wrong:
+    EIP-7702 designators re-pointed since the analysed block."""
     have = {r[0] for r in con.execute("SELECT addr FROM code")}
     todo = sorted(a for a in addrs if a and a not in have and not is_precompile(a))
-    stale = 0
-    for i in range(0, len(todo), CODE_BATCH):
-        chunk = todo[i:i + CODE_BATCH]
-        read_at = block
-        codes = _get_code(fast_rpc, chunk, hex(block))
-        if codes is None:
-            # No state at that height on the fast node. `latest` is very nearly
-            # always the same bytecode and costs a fraction of the archive read.
-            codes = _get_code(fast_rpc, chunk, "latest")
+    at_block = hex(block)
+    order = [(fast_rpc, at_block), (fast_rpc, "latest"), (archive_rpc, at_block)]
+    if exact:
+        order[1], order[2] = order[2], order[1]
+
+    def fetch(chunk):
+        for rpc, tag in order:
+            codes = _get_code(rpc, chunk, tag)
             if codes is not None:
-                read_at = -1
-                stale += len(chunk)
-        if codes is None:
-            codes = _get_code(archive_rpc, chunk, hex(block))
-        if codes is None:
-            raise RpcError(f"could not resolve code for {len(chunk)} addresses")
-        con.executemany(
-            "INSERT OR REPLACE INTO code VALUES (?,?,?,?,?)",
-            [(a, code_id(bytes.fromhex((c or "0x")[2:])), max(len(c or "0x") // 2 - 1, 0),
-              read_at, delegate_of(c))
-             for a, c in zip(chunk, codes)])
-        con.commit()
+                return codes, (-1 if tag == "latest" else block)
+        raise RpcError(f"could not resolve code for {len(chunk)} addresses")
+
+    chunks = [todo[i:i + CODE_BATCH] for i in range(0, len(todo), CODE_BATCH)]
+    stale = 0
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for chunk, (codes, read_at) in zip(chunks, pool.map(fetch, chunks)):
+            stale += len(chunk) if read_at < 0 else 0
+            con.executemany(
+                "INSERT OR REPLACE INTO code VALUES (?,?,?,?,?)",
+                [(a, code_id(bytes.fromhex((c or "0x")[2:])), max(len(c or "0x") // 2 - 1, 0),
+                  read_at, delegate_of(c))
+                 for a, c in zip(chunk, codes)])
+            con.commit()
     if stale:
         print(f"  note: {stale} addresses resolved at 'latest' rather than block "
-              f"{block} (no state at that height on the fast node)")
+              f"{block} (no state at that height" + (" on either node)" if exact else
+              " on the fast node; --exact-code reads the archive first)"))
 
 
 def _get_code(rpc, chunk, block_tag):
@@ -221,8 +242,11 @@ def cmd_collect(args):
 
     print(f"collected {ok} blocks, {failed} failed, {time.time()-t0:.0f}s")
     print("resolving code identity...")
+    # Include frames an earlier, interrupted run stored but never resolved.
+    addrs.update(r[0] for r in con.execute("SELECT DISTINCT addr FROM frames WHERE code_id IS NULL"))
     # Fast node first, archive only where it has to be - see resolve_code.
-    resolve_code(Rpc([args.rpc]), trace_rpc, con, addrs, max(blocks))
+    resolve_code(Rpc([args.rpc]), trace_rpc, con, addrs, max(blocks),
+                 exact=args.exact_code, workers=args.workers)
     con.execute("UPDATE frames SET code_id = (SELECT c.code_id FROM code c WHERE c.addr = frames.addr) "
                 "WHERE code_id IS NULL")
     con.commit()

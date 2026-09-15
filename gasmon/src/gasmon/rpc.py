@@ -21,13 +21,30 @@ class RpcError(Exception):
     pass
 
 
-class Rpc:
-    """Round-robin JSON-RPC client with backoff. Endpoints rate-limit; batches
-    over ~40 get 429s on the official node."""
+class _Transient(Exception):
+    """Worth retrying: throttled, timed out, reset, or a gateway error."""
 
-    def __init__(self, urls, tries=6):
+
+class _Refused(Exception):
+    """The endpoint rejected a multi-call batch as a whole - a fact about the
+    endpoint's batch ceiling, not about the calls in it."""
+
+
+class Rpc:
+    """Round-robin JSON-RPC client with backoff.
+
+    Endpoints differ in how large a batch they accept, and they do not all say
+    so politely: the official node throttles batches over ~40 with 429s, and
+    keyless drPC answers any batch of 5 or more with a bare HTTP 500. So each
+    endpoint keeps its own batch ceiling, halved whenever it refuses a batch,
+    and every batch is cut to fit whichever endpoint each piece lands on.
+    Without this, round-robining eth_* onto drPC fails every block whose
+    receipt batch happens to land there."""
+
+    def __init__(self, urls, tries=6, max_batch=40):
         self.urls = urls if isinstance(urls, list) else [urls]
         self.tries = tries
+        self.max_batch = dict.fromkeys(self.urls, max_batch)
         self._i = 0
         self._lock = threading.Lock()
 
@@ -38,36 +55,69 @@ class Rpc:
             return u
 
     def call(self, method, params, timeout=120):
-        return self._send({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}, timeout)
-
-    def batch(self, calls, timeout=120):
-        """calls: list of (method, params). Returns results in input order."""
-        body = [{"jsonrpc": "2.0", "id": i, "method": m, "params": p} for i, (m, p) in enumerate(calls)]
-        out = self._send(body, timeout)
-        by_id = {r["id"]: r for r in out}
-        return [by_id[i].get("result") for i in range(len(calls))]
-
-    def _send(self, body, timeout):
+        body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
         last = None
         for attempt in range(self.tries):
-            url = self._next()
             try:
-                req = urllib.request.Request(url, json.dumps(body).encode(), HEADERS)
-                resp = json.load(urllib.request.urlopen(req, timeout=timeout))
-            except urllib.error.HTTPError as e:
-                last = f"HTTP {e.code}"
-                if e.code in (429, 502, 503, 504):
-                    time.sleep(1.5 * (attempt + 1))
-                    continue
-                raise
-            except Exception as e:  # timeouts, connection resets
-                last = str(e)[:120]
-                time.sleep(1.0 * (attempt + 1))
+                resp = self._post(self._next(), body, timeout)
+            except _Transient as e:
+                last = str(e)
+                time.sleep(1.5 * (attempt + 1))
                 continue
-            if isinstance(resp, dict) and "error" in resp:
+            if "error" in resp:
                 raise RpcError(resp["error"].get("message", str(resp["error"])))
-            return resp["result"] if isinstance(resp, dict) else resp
+            return resp.get("result")
         raise RpcError(f"exhausted {self.tries} attempts: {last}")
+
+    def batch(self, calls, timeout=120):
+        """calls: list of (method, params). Returns results in input order; a
+        call the node could not answer comes back as None."""
+        results = [None] * len(calls)
+        done = failures = 0
+        last = None
+        while done < len(calls):
+            url = self._next()
+            n = min(self.max_batch[url], len(calls) - done)
+            body = [{"jsonrpc": "2.0", "id": done + k, "method": m, "params": p}
+                    for k, (m, p) in enumerate(calls[done:done + n])]
+            try:
+                out = self._post(url, body, timeout)
+            except _Refused:
+                with self._lock:
+                    self.max_batch[url] = min(self.max_batch[url], max(n // 2, 1))
+                continue
+            except _Transient as e:
+                failures, last = failures + 1, str(e)
+                if failures >= self.tries:
+                    raise RpcError(f"exhausted {self.tries} attempts: {last}")
+                time.sleep(1.5 * failures)
+                continue
+            if isinstance(out, dict):  # a lone call rejected with an error object
+                raise RpcError(out.get("error", {}).get("message", str(out)))
+            for r in out:
+                results[r["id"]] = r.get("result")
+            done += n
+            failures = 0
+        return results
+
+    def _post(self, url, body, timeout):
+        """One round trip. Raises _Refused when a batch of several calls is
+        rejected whole, _Transient for anything worth retrying elsewhere."""
+        batched = isinstance(body, list) and len(body) > 1
+        req = urllib.request.Request(url, json.dumps(body).encode(), HEADERS)
+        try:
+            resp = json.load(urllib.request.urlopen(req, timeout=timeout))
+        except urllib.error.HTTPError as e:
+            if e.code == 500 and batched:
+                raise _Refused(f"HTTP 500 for a batch of {len(body)}")
+            if e.code in (408, 429, 500, 502, 503, 504):
+                raise _Transient(f"HTTP {e.code}")
+            raise RpcError(f"HTTP {e.code} from {url}")
+        except Exception as e:  # timeouts, connection resets, truncated JSON
+            raise _Transient(str(e)[:120])
+        if batched and isinstance(resp, dict):
+            raise _Refused(f"error object for a batch of {len(body)}")
+        return resp
 
 
 def h2i(x, default=0):
