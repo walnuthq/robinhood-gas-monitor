@@ -21,7 +21,7 @@ export default async function HealthPage() {
     <SidebarProvider>
       <AppSidebar active="health" />
       <SidebarInset>
-        <SiteHeader title="Chain health" traceWindow={false} />
+        <SiteHeader title="Chain health" /* traceWindow={false} */ />
         <HealthView snapshot={snapshot} />
       </SidebarInset>
     </SidebarProvider>

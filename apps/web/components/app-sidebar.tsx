@@ -3,17 +3,17 @@ import Link from "next/link"
 import { BlockLink } from "@/components/explorer-link"
 import {
   Activity,
-  BadgeCheck,
+  // BadgeCheck,
   Boxes,
-  Braces,
-  Database,
+  // Braces,
+  // Database,
   Fuel,
   Gauge,
   HeartPulse,
-  Layers,
-  PackagePlus,
-  Settings2,
-  ShieldCheck,
+  // Layers,
+  // PackagePlus,
+  // Settings2,
+  // ShieldCheck,
 } from "lucide-react"
 
 import {
@@ -36,27 +36,27 @@ import {
  * selectors, deployments, blocks — plus verification coverage, which is the
  * feasibility metric the whole report hangs on.
  *
- * Only Overview is built. The rest are deliberately visible-but-inert so the
- * shape of the product is legible in the prototype.
+ * Overview and Chain health are built; Contracts is still inert. The other
+ * links are commented out until their pages exist.
  */
 const analysis = [
   { id: "overview", title: "Overview", icon: Gauge, href: "/" },
   { id: "health", title: "Chain health", icon: HeartPulse, href: "/health" },
   { title: "Contracts", icon: Boxes, href: "#", badge: "3.4k" },
-  { title: "Functions", icon: Braces, href: "#" },
-  { title: "Deployments", icon: PackagePlus, href: "#" },
-  { title: "Blocks", icon: Layers, href: "#" },
-  { title: "Sources", icon: BadgeCheck, href: "#", badge: "57%" },
+  // { title: "Functions", icon: Braces, href: "#" },
+  // { title: "Deployments", icon: PackagePlus, href: "#" },
+  // { title: "Blocks", icon: Layers, href: "#" },
+  // { title: "Sources", icon: BadgeCheck, href: "#", badge: "57%" },
 ]
 
 /** Head of the collected range; also the sidebar's link out to the explorer. */
 const LAST_COLLECTED_BLOCK = 60_271_574
 
-const collector = [
-  { title: "Runs", icon: Database, href: "#" },
-  { title: "Identity checks", icon: ShieldCheck, href: "#", badge: "5/5" },
-  { title: "Settings", icon: Settings2, href: "#" },
-]
+// const collector = [
+//   { title: "Runs", icon: Database, href: "#" },
+//   { title: "Identity checks", icon: ShieldCheck, href: "#", badge: "5/5" },
+//   { title: "Settings", icon: Settings2, href: "#" },
+// ]
 
 /** Which page is showing. Passed by each page rather than read from the URL, so
  *  the sidebar stays a Server Component. */
@@ -109,6 +109,8 @@ export function AppSidebar({ active = "overview" }: { active?: SidebarPage }) {
           </SidebarGroupContent>
         </SidebarGroup>
 
+        {/* Every Collector link is commented out, so the group would render as a
+            bare label.
         <SidebarGroup>
           <SidebarGroupLabel>Collector</SidebarGroupLabel>
           <SidebarGroupContent>
@@ -129,7 +131,7 @@ export function AppSidebar({ active = "overview" }: { active?: SidebarPage }) {
               ))}
             </SidebarMenu>
           </SidebarGroupContent>
-        </SidebarGroup>
+        </SidebarGroup> */}
       </SidebarContent>
 
       <SidebarFooter>

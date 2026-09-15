@@ -1,7 +1,8 @@
 # The 2026-09-04 Robinhood Chain incident, as recorded on-chain
 
-**Status:** internal — 2026-09-14
+**Status:** internal — 2026-09-14, updated 2026-09-15
 **Companion to:** [robinhood-chain-recon.md](robinhood-chain-recon.md)
+**Public summary:** [robinhood-chain-2026-09-04-incident-summary.md](robinhood-chain-2026-09-04-incident-summary.md)
 
 On 2026-09-04, at the chain's all-time fee peak, the press reported that Robinhood
 Chain **stopped producing blocks for more than 14 minutes** from about 12:57 UTC.
@@ -22,6 +23,19 @@ be recomputed from them.
 > records and Chainlink's timestamps, answered the question §6 had left open
 > (read path or write path): it was the write path. See §7–§8.
 
+> **Note, 2026-09-15.** A fourth pass, over every Ethereum receipt from 12:20 to
+> 12:50 and the batch poster's own transactions, answered two questions §7 had
+> left open. It also corrected one explanation:
+>
+> - **What set off Ethereum's fee spike:** the US jobs report, released at
+>   12:30:00 UTC.
+> - **Why the poster stalled:** its fee caps were not stale, as §7 first
+>   suggested. It bid a 0.001 gwei priority fee, the lowest of any rollup, and was
+>   passed over while other rollups kept posting.
+> - **Robinhood's response:** it raised that tip 500× at 20:06:47 the same evening.
+>
+> See §7, "What set off the spike" and "Why the poster could not get in".
+
 ## Headline
 
 | Question | Answer |
@@ -31,7 +45,8 @@ be recomputed from them.
 | Who was affected? | **Nearly everyone.** The median busy entry contract kept 19% of its successful traffic, and none kept 80%. Wallets, trading terminals, routers and a bridge fell alike, and busy bots were cut as hard as occasional users |
 | Where did it fail? | **In transaction ingress.** From 12:40 to 13:10, Chainlink price updates landed only on their 2nd–5th broadcast, a minute apart. Submissions were being dropped, not blocks |
 | What triggered it? | **An Ethereum fee spike at 12:30** (base fee 18× within 20 minutes) **stalled Robinhood's batch poster** for 8½ minutes, the longest stall in 13.8 days. The poster had no spare capacity, so its backlog of unposted blocks grew to ~18 minutes |
-| Is that the whole cause? | **No.** On Sep 11 the same Ethereum trigger and a 5-minute poster stall caused no ingress failure. How the backlog turned into dropped transactions inside Robinhood's infrastructure is not visible on-chain (§7) |
+| What set off the spike, and why did the poster stall? *(added 2026-09-15)* | **The US jobs report**, released at 12:30:00 UTC, set off an arbitrage rush. The first full block after it paid 12.6 ETH in priority fees. **The poster was outbid:** it tipped 0.001 gwei while 22 other rollups kept posting at mostly 1–5 gwei. Its fee caps were not the constraint. Robinhood raised the tip to 0.5 gwei at 20:06:47 that evening (§7) |
+| Is that the whole cause? | **No.** On Sep 11 the same Ethereum trigger and a 5-minute poster stall caused no ingress failure. How the backlog turned into dropped transactions inside Robinhood's infrastructure is not visible on-chain (§7). *(2026-09-15: by Sep 11 the poster was also tipping 250× more.)* |
 | Could it have been caught? | **Yes, from public data.** A poster-silence alert fires at 12:34:47, and a write-path alert that stayed quiet on every other day of the fortnight fires by 12:45. The press reported the start as 12:57 (§8) |
 | Is it a daily pattern? | **No.** The same clock window on 09-03 and 09-05 shows no dip |
 | Did L1 pricing or Robinhood's own fee spike cause it? | **Neither fits the timing.** Both turn out to be downstream of the Ethereum spike (§7) |
@@ -350,6 +365,57 @@ At the 12:54 peak that is 18× its 12:00–12:27 level (0.09–0.12 gwei). In mo
 blocks at 12:30–12:32 no blobs were included at all. Every Ethereum block from
 12:00 to 13:30 was read.
 
+### What set off the spike: the US jobs report
+
+*Added 2026-09-15.*
+
+The US Bureau of Labor Statistics released the August employment report at
+8:30 a.m. ET on Friday Sep 4, which is 12:30:00 UTC
+([BLS](https://www.bls.gov/news.release/empsit.nr0.htm)). Payrolls rose 162,000
+against a Dow Jones consensus of 53,000, and rate-hike odds rose. Coverage of the
+market reaction agrees on the rest:
+
+- Bitcoin fell more than 2% "within minutes of the release"
+  ([Yahoo Finance](https://finance.yahoo.com/markets/crypto/articles/bitcoin-slides-blowout-jobs-report-151328014.html)).
+- The crypto market lost roughly $50–70 billion in under half an hour
+  ([KuCoin](https://www.kucoin.com/news/flash/crypto-market-loses-50-billion-in-30-minutes-amid-jobs-report-shockwave)).
+
+The measurement below covers every receipt in the 150 Ethereum blocks from 12:20 to
+12:50: 45,431 transactions, whose gas adds up to each block's `gasUsed` in all 150.
+
+| per block | 12:20–12:29 (50 blocks) | **12:30–12:35 (30)** | 12:36–12:50 (70) |
+| --- | ---: | ---: | ---: |
+| gas used ÷ gas limit | 49% | **79%** | 57% |
+| transactions | 311 | 284 | 304 |
+| failed transactions | 0.9% | **6.7%** | 2.0% |
+| Uniswap v2/v3/v4 swaps | 48 | **162** | 76 |
+| Chainlink `AnswerUpdated` | 0.3 | **4.9** | 0.8 |
+| Aave v3 liquidations | 0 in 50 blocks | 4 in 30 | 1 in 70 |
+| priority fees | 0.018 ETH | **0.597 ETH** | 0.060 ETH |
+
+- **The first full block after the release was a bidding war.** Block 25,903,966
+  (12:30:23) used 59.9M of its 60M gas and carried 320 swaps. One transaction to
+  the unverified contract `0xbdb3ba9f…` used 10.2M gas and paid 12.61 ETH in
+  priority fees, against 0.1 ETH for the whole previous block. From 12:30 to 12:35
+  that contract took 50 transactions from 18 senders and paid 15.64 of the 17.92
+  ETH in priority fees (87%). Its calls use vanity selectors (`0x000000c3`,
+  `0xa0000000`), as MEV searcher contracts do.
+- **It was a trading rush, not a liquidation cascade.** Swaps tripled and
+  Chainlink feeds updated 16× as often. The transaction count did not rise, but
+  transactions got heavier and more of them failed, as competing arbitrage does.
+  Liquidations stayed near zero.
+- **The base fee then compounded.** Ethereum raises the base fee after any block
+  more than half full. Blocks ran 77–100% full for five minutes and 50–64% for the
+  quarter hour after, which took it from 0.09 gwei to 1.8 gwei by 12:54.
+
+The same news reached Robinhood Chain directly. Its Chainlink feeds logged 82
+transmissions in the 12:30 bin against 20 in the half hour before (table below), and
+its own load surged to 72–80 Mgas/s at 12:34–12:36 (§2).
+
+As of 2026-09-15 we found no public source connecting the jobs report to Ethereum's
+fee spike or to this incident. The link rests on the timing and on what filled the
+blocks.
+
 ### The batch poster stalled, with no spare capacity
 
 All 872 batches between 11:30 and 14:30 came from one poster, `0xdaa52608…`.
@@ -357,6 +423,15 @@ After its batch at 12:29:47, **it got no transaction of any kind mined until
 12:38:23**: its Ethereum nonce stayed at 190,818 through 12:36:59. That fits
 batches signed at the old price getting stuck, since a blob transaction must also
 clear the execution base fee. It stalled again from 12:42:47 to 12:48:11.
+
+> **Correction, 2026-09-15.** The old price was not the problem.
+>
+> - **Fee cap:** every batch from 12:20 to the stall allowed up to ~1.0 gwei, 10×
+>   the base fee at the time. The base fee only passed 1 gwei around 12:40.
+> - **Blob fee cap:** 0.055–0.062 gwei, against a blob base fee of 0.006–0.015 gwei
+>   through the stall.
+>
+> What was low was the priority fee. See "Why the poster could not get in" below.
 
 Across the fortnight (70,314 batches, Sep 1–14, none missing from the sequence),
 consecutive batches arrive a median 12 s apart, and 99% within 48 s:
@@ -393,6 +468,81 @@ Two things made it worse than a stall:
   kept sending about one batch per Ethereum block.
 - **So the stall had nowhere to go.** The backlog peaked at ~18 minutes at 12:45.
   It took until ~13:10 just to return to its standing 4½ minutes.
+
+### Why the poster could not get in: the lowest tip on Ethereum
+
+*Added 2026-09-15.* The sources are the poster's own batch transactions
+(`eth_getTransactionByHash`) and every blob transaction in the receipts above:
+
+- all 410 batch transactions from 12:00 to 13:30 on Sep 4;
+- all 205 from 13:30 to 14:10 on Sep 11;
+- the first batch of every hour from Sep 1 to Sep 14 (333).
+
+**It bid 0.001 gwei.** All 58 Robinhood batches from 12:20 to 12:29:47 carried
+exactly that priority fee. The other blob transactions in those minutes averaged
+1.15 gwei. They came from 52 different posters over 12:20–12:50.
+
+**Everyone else kept posting.** From 12:29:48 to 12:38:22, Ethereum included 75
+blob transactions from 22 other posters, and none from Robinhood. 88% of them
+tipped 1 gwei or more, and the lowest tip was 0.0032 gwei, 3× Robinhood's. The
+largest are OP Stack chains, whose batch inbox address ends in their chain ID:
+
+| poster | inbox | chain | blob transactions in the stall | lowest tip |
+| --- | --- | --- | ---: | ---: |
+| `0x5050f69a…` | `0xff00…8453` | Base | 32 | 2.51 gwei |
+| `0x68872466…` | `0xff00…0010` | OP Mainnet | 7 | 2.0 gwei |
+| `0x2f60a518…` | `0xff00…0130` | Unichain | 5 | 2.0 gwei |
+| `0xdbbe3d8c…` | `0xff00…0480` | World Chain | 3 | 5.01 gwei |
+
+**It got in only by re-signing with higher fees:**
+
+- **First stall:** nonce 190,818 finally landed at 12:38:23. Its fee cap had been
+  raised to 8.89 gwei (8.5×) and its tip to 0.004 gwei (4×), which reads as a
+  replacement transaction.
+- **Second stall:** by 12:41:47 the tips were back at 0.001 gwei, and the fee caps
+  were ~10× base fee again. Nothing landed from 12:42:47 until 12:48:11, when
+  batches arrived with fee caps of 21.2 gwei and tips of 0.002–0.01 gwei.
+
+Both times, the fee cap rose far more than the tip, even though the cap was not
+what held the batches back. By 12:48 it was 20× its level before 12:30, while the
+tip had risen at most 10×, to 0.01 gwei.
+
+**What this cannot show** is why builders passed over a 0.001 gwei transaction even
+in the blocks at 12:36–12:38 that were only 50–65% full. The mechanism inside the
+builders is not on-chain. What is on-chain is that Robinhood bid the least, and
+paid for it in the one window where that mattered.
+
+**Robinhood raised the tip that evening.** Bisecting the poster's batches gives
+two changes to its priority fee cap:
+
+| from batch | time (UTC) | tip cap |
+| --- | --- | ---: |
+| (start of the fortnight) | Sep 1 00:00 | 0.001 gwei, in all 93 hourly samples up to the first change |
+| 193,012 | **Sep 4, 20:06:47**, ~7½ h after the stall | **0.5 gwei** (500×) |
+| 213,722 | Sep 8, 19:27:23 | 0.25 gwei |
+
+What the change did and did not do:
+
+- **It did not raise posting throughput.** The poster sent 22–26 batches per 4
+  minutes on either side of 20:06:47.
+- **The backlog drained at that same rate.** It cleared over 20:08–20:28 as US
+  trading closed, as described above. Posting did not speed up to clear it.
+- **It is cheap.** At 144,456 gas per batch, 0.25 gwei is 0.000036 ETH per batch,
+  about 0.18 ETH a day at the fortnight's ~5,100 batches a day. Even 2 gwei would
+  be 0.0003 ETH per batch.
+
+**Stalls since the change.** Batch gaps of 300 s or more:
+
+- **On the 0.001 gwei tip:** four in 3.8 days (Sep 2 13:41, Sep 4 09:15, 12:29 and
+  12:42).
+- **Since the change:** one in 10 days (Sep 11 13:48, exactly 300 s).
+- **Through Ethereum fee spikes:** seven spikes of 5× or more hit from Sep 6 to
+  Sep 14 (§8). None stalled the poster beyond that one 300 s gap, and a 21.5× spike
+  on Sep 6 left its longest gap at 36 s.
+
+The poster also had headroom before every one of those spikes: a backlog of 10–76 s,
+against 250 s on Sep 4. So this does not separate the effect of the tip from that of
+the load.
 
 ### Robinhood's L1 pricer lost its cost data, with no buffer
 
@@ -513,6 +663,22 @@ spike stalled a batch poster that was already at its capacity ceiling, and
 transaction ingress failed while the resulting backlog was at its worst.** Only
 Robinhood can close the last link.
 
+> **Update, 2026-09-15.** Steps 1 and 2 are now explained.
+>
+> - **Step 1** was set off by the US jobs report at 12:30:00, which started an
+>   arbitrage bidding war on Ethereum.
+> - **Step 2** happened because the poster bid a 0.001 gwei priority fee and was
+>   passed over while 22 other rollups kept posting at mostly 1–5 gwei. Its fee
+>   caps were not binding.
+> - **The counterexample** has a second difference. By Sep 11 the poster's tip was
+>   0.25 gwei, after Robinhood raised it at 20:06:47 on Sep 4, so Sep 11 differed
+>   in tip as well as headroom. The data cannot say which mattered.
+>
+> The supported sentence becomes: **an Ethereum fee spike, set off by the US jobs
+> report, stalled a batch poster that was bidding the lowest priority fee of any
+> rollup and was already at its capacity ceiling. Transaction ingress failed while
+> the resulting backlog was at its worst.**
+
 ## 8. What a monitor would have seen
 
 Every signal below comes from public data: Ethereum logs and headers, and Robinhood
@@ -614,6 +780,26 @@ The Sep 11 control replays as expected: a fee spike at 13:51:35 (7.3×) and a
 poster-silent warning at 13:53:35. No page and no impact alert followed, and the
 Chainlink delay stayed flat.
 
+### A risk the rules miss: the poster's bid (2026-09-15)
+
+None of the seven rules looks at *how* the poster bids, and the biggest avoidable
+risk on Sep 4 was visible there for days:
+
+- **The poster's tip was 0.001 gwei from at least Sep 1.** The other rollups whose
+  blobs were included beside it paid about a thousand times more.
+- **That data is public.** The poster's batch transactions and every other blob
+  transaction are on Ethereum.
+
+A **"poster underbidding"** watch would compare the poster's priority fee with the
+fees of the blob transactions actually included, per block. It would have fired
+continuously from Sep 1 to 20:06:47 on Sep 4, then gone quiet. Its most useful
+message would have come days ahead: *your batches are the first thing a builder
+drops when Ethereum gets busy*.
+
+It is not implemented in `gasmon health`. Because it would have fired
+continuously before the incident, it describes a standing risk and gives no lead
+time.
+
 ## How it was traced
 
 **Sample.** Every 10th block from 54,266,140 to 54,308,000 (12:30–13:40 UTC):
@@ -660,6 +846,18 @@ pay-as-you-go plan ($6 per million requests, flat across methods).
   through `robinhood.drpc.org`.
 - **Every L2 block** from 12:46 to 12:56 and from 13:24 to 13:30, plus 2-minute
   windows of consecutive blocks from 12:20 to 13:34.
+
+**Added 2026-09-15** (all keyless, through `eth.drpc.org`):
+
+- **Ethereum receipts and blocks:** every receipt in the 150 Ethereum blocks
+  12:20–12:50, 45,431 transactions. Each block's receipts sum exactly to its
+  header `gasUsed`. The full blocks came along for selectors, builder tags and
+  proposer payments.
+- **The poster's bids:** 948 batch transactions, read with
+  `eth_getTransactionByHash` and their receipts for fee caps and tips. The tip
+  changes were found by bisecting batch sequence numbers.
+- **The jobs report:** the release time and figures come from the BLS release, and
+  the market reaction from press coverage, both cited in §7.
 
 ## Reproducing this
 
@@ -732,6 +930,19 @@ cast call 0x000000000000000000000000000000000000006c "getL1PricingSurplus()(int2
 curl -s $RH -H 'content-type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"eth_getLogs","params":[{
   "topics":["0xc797025feeeaf2cd924c99e9205acb8ec04d5cad21c41ce637a38fb6dee6016a"],"fromBlock":"0x33bc240","toBlock":"0x33c858f"}]}'   # 12:00–13:24, ≤ 50,000 blocks
 # inclusion delay = block timestamp − observationsTimestamp
+
+# (added 2026-09-15) The bidding war in the first full block after the jobs report (12:30:23).
+# Priority fees paid = (effectiveGasPrice − the block's baseFeePerGas) × gasUsed
+cast block 25903966 -f baseFeePerGas --rpc-url $L1                  # 88283617
+curl -s $L1 -H 'content-type: application/json' --data \
+  '{"jsonrpc":"2.0","id":1,"method":"eth_getBlockReceipts","params":["0x18b435e"]}' \
+  | jq -c '.result[] | select(.to=="0xbdb3ba9ffe392549e1f8658dd2630c141fdf47b6") | {gasUsed, effectiveGasPrice}'
+# → 0x9b6ac1 at 0x12055d01c06 wei: 12.61 ETH in priority fees
+
+# The poster's bid: priority fee and fee cap on a batch transaction (hex wei)
+cast tx <batch tx hash> --json --rpc-url $L1 | jq -r '.maxPriorityFeePerGas, .maxFeePerGas'   # 0xf4240 = 0.001 gwei before 20:06:47 on Sep 4
+cast tx 0xf67acc8b08845ca109f64eaeb79f9fe8ccc934dc5f3ad161ebbac42d60adbd61 --json --rpc-url $L1 \
+  | jq -r .maxPriorityFeePerGas                                     # batch 193,012: 0x1dcd6500 = 0.5 gwei
 ```
 
 The phase tables are `GROUP BY`s over `txs` (`recipient`, `sender`, `status`) joined

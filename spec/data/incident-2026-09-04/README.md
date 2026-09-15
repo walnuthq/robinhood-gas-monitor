@@ -2,7 +2,8 @@
 
 These are the datasets behind
 [`../../robinhood-chain-2026-09-04-incident.md`](../../robinhood-chain-2026-09-04-incident.md).
-All were collected on 2026-09-14 from public, keyless endpoints. Every number in
+All were collected from public, keyless endpoints on 2026-09-14, except the five
+files marked as added on 2026-09-15, which were collected that day. Every number in
 that document can be recomputed from these files; nothing needs chain access
 again.
 
@@ -58,6 +59,25 @@ Decoders, so each file can be re-derived:
 | `batch-poster-nonce-2026-09-04.csv` | 13 | The poster's Ethereum nonce every 12 blocks from 12:20 to 12:49; frozen at 190,818 from 12:29:47 to 12:36:59 | §7 |
 | `blocks-2026-09-04-1200_1330.csv` | 451 | Every Ethereum block 12:00–13:30: base fee, excess blob gas, blob gas used, gas utilisation | §7 trigger |
 | `fees-around-posting-stalls-2026-09-01_14.csv` | 12 | Each batch gap of ≥180 s: Ethereum median base fee 15–5 min before, maximum during the gap, their ratio, utilisation and blobs per block during | §7 controls, §8 |
+
+Added 2026-09-15, for the jobs-report trigger and the poster's bids:
+
+| File | Rows | What it is | Spec |
+| --- | ---: | --- | --- |
+| `receipts-2026-09-04-1220_1250.csv` | 45,431 | Every Ethereum transaction in blocks 25,903,915–25,904,064 (12:20–12:50). Per row: sender, recipient, status, gas, effective gas price, priority fee per gas, blob gas, 4-byte selector, value, and counts of the Uniswap swaps, Aave v3 liquidations and Chainlink `AnswerUpdated` it emitted. Receipts sum to each header's `gasUsed` in all 150 blocks | §7 "What set off the spike" |
+| `blocks-activity-2026-09-04-1220_1250.csv` | 150 | The same blocks, per block: builder tag, fee recipient, fullness, base fee, transactions and failures, swaps, Chainlink updates, liquidations, priority fees, proposer payment, blob transactions and blobs, Robinhood batches | §7 trigger table |
+| `blob-txs-2026-09-04-1220_1250.csv` | 391 | Every blob transaction in those blocks: poster, inbox, blobs, priority fee per gas, and whether it is Robinhood's | §7 "Why the poster could not get in" |
+| `batch-poster-fees-2026-09-01_14.csv` | 948 | Robinhood batch transactions with `maxPriorityFeePerGas`, `maxFeePerGas`, `maxFeePerBlobGas`, gas used, prices paid and the block base fee. `sample` is `sep4-window` (all, 12:00–13:30), `sep11-window` (all, 13:30–14:10) or `hourly` (first batch of each hour, Sep 1–14) | §7 poster bids |
+| `batch-poster-tip-changes.csv` | 4 | The batches either side of the two tip-cap changes, found by bisection: 0.001 → 0.5 gwei at 20:06:47 on Sep 4, 0.5 → 0.25 gwei at 19:27:23 on Sep 8 | §7 "Robinhood raised the tip" |
+
+More decoders for these files:
+
+- **Uniswap `Swap`:** v2 `0xd78ad95f…9d822`, v3 `0xc42079f9…fbcca67`, v4 `0x40e9cecb…d7112f`.
+- **Aave v3 `LiquidationCall`:** `0xe413a321…e005286`.
+- **Chainlink `AnswerUpdated`:** `0x0559884f…46fc5f`.
+- **Priority fee per gas** is `effectiveGasPrice − baseFeePerGas`.
+- **Proposer payment** is the value of a block's last transaction when its sender is the block's fee recipient, as builders pay proposers.
+- **OP Stack inboxes:** a batch inbox address is `0xff00…` followed by the chain ID. For example `…8453` is Base, `…0010` OP Mainnet, `…0130` Unichain and `…0480` World Chain.
 
 ## Robinhood Chain (`robinhood/`)
 

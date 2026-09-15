@@ -53,7 +53,10 @@ topped out at $8.36M/day on 2026-09-04 and is down 74% since. See
 >   kept producing blocks while throughput collapsed ~60% for 17 minutes. Traces
 >   put the whole episode at 12:37–13:20. Ethereum and Chainlink data then traced
 >   it to an Ethereum fee spike that stalled the batch poster, followed by dropped
->   transactions at ingress. It also likely explains the L1 pricing bursts. See
+>   transactions at ingress. It also likely explains the L1 pricing bursts.
+>   *(2026-09-15: the US jobs report at 12:30 UTC set off the spike. The poster
+>   stalled because it tipped 0.001 gwei, the lowest of any rollup, and Robinhood
+>   raised the tip to 0.5 gwei that evening.)* See
 >   [robinhood-chain-2026-09-04-incident.md](robinhood-chain-2026-09-04-incident.md).
 
 ## Identity and access

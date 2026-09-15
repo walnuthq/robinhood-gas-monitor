@@ -71,10 +71,12 @@ const REPLAYS = [
     id: "2026-09-04",
     label: "Sep 4 · incident",
     summary:
-      "Ethereum fees spike at 12:30, the batch poster stalls, and from 12:40 transactions are dropped at ingress.",
+      "The US jobs report sets off a bidding war on Ethereum at 12:30. The batch poster, tipping 0.001 gwei, stalls, and from 12:40 transactions are dropped at ingress.",
     from: "2026-09-04T12:10:00Z",
     to: "2026-09-04T13:40:00Z",
     annotations: [
+      // BLS release time; the Ethereum blocks that follow are in spec §7.
+      { t: "2026-09-04T12:30:00Z", label: "US jobs report released" },
       // From the traced sample in spec/data/incident-2026-09-04.
       { t: "2026-09-04T12:37:00Z", label: "Users start failing" },
       // As reported by the press, citing explorer data.
@@ -85,7 +87,7 @@ const REPLAYS = [
     id: "2026-09-11",
     label: "Sep 11 · control",
     summary:
-      "The same kind of Ethereum spike and a five-minute poster stall, while the poster had headroom. Ingress holds.",
+      "The same kind of Ethereum spike and a five-minute poster stall. The poster now has headroom and a 250× higher tip, and ingress holds.",
     from: "2026-09-11T13:30:00Z",
     to: "2026-09-11T14:40:00Z",
     annotations: [],

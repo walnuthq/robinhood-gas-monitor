@@ -29,6 +29,9 @@ traps hit building it, several of which fail silently rather than erroring.
 - `spec/robinhood-chain-2026-09-04-incident.md` — the reported 09-04 halt, which is
   not in the blocks; its cause as far as public data shows (§7) and the alert rules
   that would have caught it (§8)
+- `spec/robinhood-chain-2026-09-04-incident-summary.md`: the same incident for a
+  public audience (thread draft), covering what happened, proposed fixes and what
+  the monitor showed. Keep its numbers in step with the full write-up.
 - `spec/profiling.md`, `spec/profiling-a-deployed-contract.md` — soldb line-level profiling
 - `spec/building-the-dashboard.md` — **read before editing `apps/web`**: Base UI vs
   Radix, recharts 3, Turbopack, static export, and how to talk about sampled data
@@ -78,13 +81,20 @@ several conclusions have already reversed. Keep that convention.
   bundler went up to ~3 min without seeing its own ops land (AA25 re-sends,
   median gap 73 s vs 2.5 s normally).
   **Cause, as far as public data goes (spec §7):**
-  - an Ethereum fee spike at 12:30 (base fee 18×) stalled Robinhood's batch
-    poster for 516 s, the longest gap in 70,314 batches since Sep 1;
+  - the US jobs report (12:30:00 UTC, 162k vs 53k expected) set off an arbitrage
+    bidding war on Ethereum. Blocks ran ~80% full with 33× normal priority fees,
+    and the base fee compounded 18× by 12:54;
+  - Robinhood's batch poster, tipping **0.001 gwei** (the lowest of any rollup,
+    with fee caps 10× base fee, so not stale), got nothing in for 516 s, the
+    longest gap in 70,314 batches since Sep 1. 22 other rollups kept posting at
+    mostly 1–5 gwei. Robinhood raised the tip to 0.5 gwei at 20:06:47 that evening
+    (0.25 from Sep 8). "Stuck at the old fee cap" was wrong (corrected 2026-09-15);
   - the poster was already at its ceiling (~1 three-blob batch per L1 block,
     standing 4.5-min backlog), so the backlog hit ~18 min;
   - ingress then dropped txs from 12:40 to 13:10: Chainlink OCR2 inclusion delay
     ran in 60 s re-broadcast steps.
-  Sep 11 had the same trigger without failure. The backlog→drop link is inferred;
+  Sep 11 had the same trigger without failure, but with headroom *and* a 250×
+  higher tip, which can't be separated. The backlog→drop link is inferred;
   Nitro's hard surplus throttle is ruled out. Don't claim more than that.
 - **Revert waste is not low.** 6.55% of gas and 13.9% of txs (962 blocks,
   09-01..09-14), 40% of txs on 09-10. The recon's 0.5% was one block.
